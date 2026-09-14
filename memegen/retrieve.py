@@ -7,8 +7,22 @@ vetores dos 836 templates cabem num arquivo .npy de poucos megabytes e a busca
 dedicado seria mais peça para manter do que ganho.
 
 O que é indexado é a FUNÇÃO do meme, não sua aparência: "ser tentado por algo
-novo ignorando o que já funciona", não "homem de casaco laranja". É isso que
-faz a situação do usuário casar com o template certo.
+novo ignorando o que já funciona", não "homem de casaco laranja". Isso não é
+preferência de estilo — foi medido. Indexando a descrição original do 9GAG, que
+é visual e histórica, a busca casa por assunto de superfície e erra o alvo:
+
+    "escolher entre dormir cedo ou terminar a série"
+      -> Alarm Clock, Sleeping Shaq          (casou com "sono")
+      esperado: Two Buttons                  (a função é dilema)
+
+    "troquei de framework de novo"
+      -> Skype, Internet Explorer            (casou com "tecnologia")
+      esperado: Distracted Boyfriend         (a função é tentação pelo novo)
+
+Por isso `_document()` monta o texto a partir de `funcao`, `quando_usar` e dos
+papéis dos slots — os campos que o enriquecimento produz — e nunca da descrição
+crua do 9GAG. A qualidade da busca é herdada inteiramente da qualidade do
+enriquecimento.
 
 Dependência opcional: `pip install sentence-transformers`. O import é preguiçoso
 para que o resto do projeto funcione sem ela.
