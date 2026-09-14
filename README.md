@@ -164,6 +164,9 @@ Por variável de ambiente:
 - `MEMEGEN_GENERATE_MODEL` (padrão `claude-opus-5`) — escolha e escrita
 - `ANTHROPIC_API_KEY` — obrigatória para `enrich` e `make`/`serve`; `sync` e a
   navegação funcionam sem ela
+- `ANTHROPIC_WORKSPACE_ID` — só para chave de **organização**, que não é amarrada
+  a um workspace. A API recusa essas chaves sem o header dizendo qual workspace
+  usar. Chave já escopada a um workspace dispensa
 
 ## Testes
 

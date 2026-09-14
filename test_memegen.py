@@ -622,3 +622,34 @@ class TestPortabilidade(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestWorkspace(Base):
+    """Chave de organizacao exige dizer qual workspace usar."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._antes = dict((k, os.environ.get(k))
+                           for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_WORKSPACE_ID"))
+        os.environ["ANTHROPIC_API_KEY"] = "sk-teste"
+        os.environ.pop("ANTHROPIC_WORKSPACE_ID", None)
+
+    def tearDown(self):
+        for k, v in self._antes.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def test_sem_workspace_o_header_nao_vai(self):
+        self.assertNotIn("anthropic-workspace-id", M._cabecalhos_api())
+
+    def test_com_workspace_o_header_vai(self):
+        os.environ["ANTHROPIC_WORKSPACE_ID"] = "wrkspc_abc"
+        self.assertEqual(M._cabecalhos_api()["anthropic-workspace-id"], "wrkspc_abc")
+
+    def test_cabecalhos_basicos_sempre_presentes(self):
+        cab = M._cabecalhos_api()
+        self.assertEqual(cab["x-api-key"], "sk-teste")
+        self.assertEqual(cab["anthropic-version"], M.VERSAO_API)

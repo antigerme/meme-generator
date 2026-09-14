@@ -315,9 +315,15 @@ def chave_api():
 
 
 def _cabecalhos_api():
-    return {"x-api-key": chave_api(),
-            "anthropic-version": VERSAO_API,
-            "Content-Type": "application/json"}
+    cab = {"x-api-key": chave_api(),
+           "anthropic-version": VERSAO_API,
+           "Content-Type": "application/json"}
+    # Chave de organizacao (nao amarrada a um workspace) exige dizer qual
+    # workspace usar; chave ja escopada a um workspace dispensa o header.
+    workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+    if workspace:
+        cab["anthropic-workspace-id"] = workspace
+    return cab
 
 
 def chamar_api(caminho, carga=None, metodo=None, timeout=300):
@@ -346,6 +352,11 @@ def chamar_api(caminho, carga=None, metodo=None, timeout=300):
             detalhe = json.loads(detalhe).get("error", {}).get("message", detalhe)
         except ValueError:
             pass
+        if "anthropic-workspace-id" in detalhe and not os.environ.get("ANTHROPIC_WORKSPACE_ID"):
+            detalhe += ("\n\nSua chave e de organizacao. Duas saidas:\n"
+                        "  1. defina ANTHROPIC_WORKSPACE_ID com o id do workspace\n"
+                        "     (Console > Settings > Workspaces, comeca com wrkspc_)\n"
+                        "  2. ou crie uma chave ja escopada a um workspace")
         raise RuntimeError("API respondeu %s: %s" % (e.code, detalhe))
 
 
@@ -1900,6 +1911,9 @@ def cmd_status(args):
     print("sincronizado: %s" % estado.get("sincronizado", "nunca"))
     print("chave da API: %s" % ("definida" if os.environ.get("ANTHROPIC_API_KEY")
                                 else "ausente"))
+    ws = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+    print("workspace   : %s" % (ws if ws else "nao definido (so preciso para "
+                                              "chave de organizacao)"))
     return 0
 
 
