@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Dados sincronizados do 9GAG e artefatos gerados (não versionar)
+data/templates/
+data/catalog.json
+data/contracts.json
+data/state.json
+out/
+
+# Fontes baixadas (licença própria — ver fonts/README.md)
+fonts/*.ttf
