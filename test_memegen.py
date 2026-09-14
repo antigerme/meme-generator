@@ -653,3 +653,238 @@ class TestWorkspace(Base):
         cab = M._cabecalhos_api()
         self.assertEqual(cab["x-api-key"], "sk-teste")
         self.assertEqual(cab["anthropic-version"], M.VERSAO_API)
+
+
+# ---------------------------------------------------------------- provedores
+
+class RespostaFalsa(object):
+    """Substitui o objeto devolvido por urlopen."""
+
+    def __init__(self, dados):
+        self._dados = json.dumps(dados).encode("utf-8")
+
+    def read(self):
+        return self._dados
+
+    def close(self):
+        pass
+
+
+class TestProvedor(Base):
+
+    def setUp(self):
+        Base.setUp(self)
+        self._antes = dict((k, os.environ.get(k)) for k in
+                           ("ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+                            "MEMEGEN_PROVIDER", "MEMEGEN_ENRICH_MODEL"))
+        for k in self._antes:
+            os.environ.pop(k, None)
+
+    def tearDown(self):
+        for k, v in self._antes.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def test_a_chave_presente_escolhe_o_provedor(self):
+        os.environ["GEMINI_API_KEY"] = "g"
+        self.assertEqual(M.provedor(), "gemini")
+        os.environ["ANTHROPIC_API_KEY"] = "a"
+        # com as duas, anthropic e o padrao
+        self.assertEqual(M.provedor(), "anthropic")
+
+    def test_variavel_desempata(self):
+        os.environ["ANTHROPIC_API_KEY"] = "a"
+        os.environ["GEMINI_API_KEY"] = "g"
+        os.environ["MEMEGEN_PROVIDER"] = "gemini"
+        self.assertEqual(M.provedor(), "gemini")
+
+    def test_provedor_desconhecido_e_recusado(self):
+        os.environ["MEMEGEN_PROVIDER"] = "openai"
+        with self.assertRaises(RuntimeError):
+            M.provedor()
+
+    def test_modelos_mudam_com_o_provedor(self):
+        os.environ["GEMINI_API_KEY"] = "g"
+        self.assertTrue(M.modelo_padrao("gerar").startswith("gemini"))
+        os.environ["ANTHROPIC_API_KEY"] = "a"
+        self.assertTrue(M.modelo_padrao("gerar").startswith("claude"))
+
+    def test_variavel_de_modelo_vence_o_padrao(self):
+        os.environ["GEMINI_API_KEY"] = "g"
+        os.environ["MEMEGEN_ENRICH_MODEL"] = "modelo-meu"
+        self.assertEqual(M.modelo_padrao("enriquecer"), "modelo-meu")
+
+
+class TestGemini(Base):
+
+    def setUp(self):
+        Base.setUp(self)
+        self._antes = dict((k, os.environ.get(k)) for k in
+                           ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MEMEGEN_PROVIDER"))
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["GEMINI_API_KEY"] = "chave-teste"
+        os.environ["MEMEGEN_PROVIDER"] = "gemini"
+        self._urlopen = M.urlopen
+        self.enviado = []
+
+    def tearDown(self):
+        M.urlopen = self._urlopen
+        for k, v in self._antes.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def _responder(self, corpo):
+        def falso(req, timeout=None):
+            self.enviado.append(
+                {"url": req.get_full_url(),
+                 "cabecalhos": dict((k.lower(), v) for k, v in req.header_items()),
+                 "carga": json.loads(req.data.decode("utf-8"))})
+            return RespostaFalsa(corpo)
+        M.urlopen = falso
+
+    def test_requisicao_tem_a_forma_do_endpoint_interactions(self):
+        self._responder({"output_text": '{"ids": []}'})
+        M.gerar_json("instrucao", "pergunta", M.ESQUEMA_TRIAGEM, "triar")
+        env = self.enviado[0]
+        self.assertTrue(env["url"].endswith("/v1beta/interactions"))
+        self.assertEqual(env["cabecalhos"]["x-goog-api-key"], "chave-teste")
+        carga = env["carga"]
+        self.assertEqual(carga["system_instruction"], "instrucao")
+        self.assertEqual(carga["input"], [{"type": "text", "text": "pergunta"}])
+        # o schema vai no topo, nao dentro de generationConfig
+        self.assertEqual(carga["response_format"]["mime_type"], "application/json")
+        self.assertEqual(carga["response_format"]["schema"], M.ESQUEMA_TRIAGEM)
+        self.assertTrue(carga["model"].startswith("gemini"))
+
+    def test_imagem_vai_como_bloco_inline(self):
+        self._responder({"output_text": "{}"})
+        img = os.path.join(M.IMAGENS, "drake.jpg")
+        M.gerar_json("s", "t", M.ESQUEMA_CONTRATO, "enriquecer", imagem=img)
+        blocos = self.enviado[0]["carga"]["input"]
+        imagem = [b for b in blocos if b.get("type") == "image"][0]
+        self.assertEqual(imagem["mime_type"], "image/jpeg")
+        with open(img, "rb") as f:
+            self.assertEqual(base64.b64decode(imagem["data"]), f.read())
+
+    def test_sistema_em_lista_vira_uma_instrucao_so(self):
+        self._responder({"output_text": "{}"})
+        M.gerar_json(["parte um", "parte dois"], "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertIn("parte um", self.enviado[0]["carga"]["system_instruction"])
+        self.assertIn("parte dois", self.enviado[0]["carga"]["system_instruction"])
+
+    def test_le_o_texto_pelo_caminho_alternativo(self):
+        """Sem output_text, o conteudo vem no ultimo passo."""
+        self._responder({"steps": [{"content": [{"text": '{"ids": ["drake"]}'}]}]})
+        dados, _ = M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(dados["ids"], ["drake"])
+
+    def test_contagem_de_tokens_aceita_nomes_diferentes(self):
+        self._responder({"output_text": "{}",
+                         "usageMetadata": {"promptTokenCount": 120,
+                                           "candidatesTokenCount": 30}})
+        _, uso = M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual((uso["input"], uso["output"]), (120, 30))
+
+    def test_sem_contagem_nao_quebra(self):
+        self._responder({"output_text": "{}"})
+        _, uso = M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual((uso["input"], uso["output"]), (0, 0))
+
+    def test_resposta_sem_texto_da_erro_claro(self):
+        self._responder({"steps": []})
+        with self.assertRaises(RuntimeError) as ctx:
+            M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertIn("sem texto", str(ctx.exception))
+
+    def test_json_invalido_da_erro_claro(self):
+        self._responder({"output_text": "isto nao e json"})
+        with self.assertRaises(RuntimeError) as ctx:
+            M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertIn("JSON", str(ctx.exception))
+
+    def test_chave_ausente_aponta_onde_pegar(self):
+        os.environ.pop("GEMINI_API_KEY", None)
+        with self.assertRaises(RuntimeError) as ctx:
+            M.chave_gemini()
+        self.assertIn("aistudio", str(ctx.exception))
+
+    def test_sugerir_funciona_ponta_a_ponta(self):
+        self._responder({"output_text": json.dumps({"sugestoes": [
+            {"template_id": "drake", "porque": "serve",
+             "textos": [{"box_id": "text-0", "texto": "a"},
+                        {"box_id": "text-1", "texto": "b"}]}]})})
+        sug, uso = M.sugerir("uma situacao", self.catalogo, self.contratos, modo="full")
+        self.assertEqual(sug[0]["template_id"], "drake")
+        self.assertEqual(uso["provedor"], "gemini")
+
+
+class TestEnriquecimentoSequencial(Base):
+    """Caminho para provedor sem API de lote: precisa ser retomavel."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._gerar = M.gerar_json
+        M.gravar_json(M.CONTRATOS, {})
+
+    def tearDown(self):
+        M.gerar_json = self._gerar
+        Base.tearDown(self)
+
+    def _contrato(self, tid):
+        return {"funcao": "f", "quando_usar": ["q"], "tom": ["t"],
+                "slots": [{"box_id": b["id"], "papel": "p", "exemplo": "e",
+                           "max_chars": 40}
+                          for b in self.catalogo[tid]["textBoxes"]],
+                "nsfw": False}
+
+    def test_grava_a_cada_template(self):
+        vistos = []
+
+        def falso(sistema, texto, schema, papel, imagem=None, modelo=None,
+                  max_tokens=4000, cachear_sistema=False):
+            tid = "drake" if "Drake" in texto else "botoes"
+            vistos.append(tid)
+            # ja gravado antes de a proxima chamada acontecer
+            if len(vistos) == 2:
+                self.assertIn(vistos[0], M.ler_json(M.CONTRATOS, {}))
+            return self._contrato(tid), {"input": 1, "output": 1}
+        M.gerar_json = falso
+
+        novos = M.enriquecer_sequencial(self.catalogo, ["drake", "botoes"], pausa=0)
+        self.assertEqual(sorted(novos), ["botoes", "drake"])
+        gravados = M.ler_json(M.CONTRATOS, {})
+        self.assertEqual(gravados["drake"]["source_hash"],
+                         self.catalogo["drake"]["_hash"])
+
+    def test_cota_estourada_para_e_preserva_o_feito(self):
+        def falso(sistema, texto, schema, papel, imagem=None, modelo=None,
+                  max_tokens=4000, cachear_sistema=False):
+            if "Drake" in texto:
+                return self._contrato("drake"), {"input": 1, "output": 1}
+            raise RuntimeError("Gemini respondeu 429: quota exceeded")
+        M.gerar_json = falso
+
+        novos = M.enriquecer_sequencial(self.catalogo, ["drake", "botoes"], pausa=0)
+        self.assertEqual(list(novos), ["drake"])
+        # o que passou ficou gravado, e o que falta continua pendente
+        self.assertEqual(list(M.ler_json(M.CONTRATOS, {})), ["drake"])
+        self.assertEqual(M.contratos_pendentes(self.catalogo,
+                                               M.ler_json(M.CONTRATOS, {})),
+                         ["botoes"])
+
+    def test_erro_comum_nao_derruba_os_outros(self):
+        def falso(sistema, texto, schema, papel, imagem=None, modelo=None,
+                  max_tokens=4000, cachear_sistema=False):
+            if "Drake" in texto:
+                raise RuntimeError("Gemini respondeu 400: schema invalido")
+            return self._contrato("botoes"), {"input": 1, "output": 1}
+        M.gerar_json = falso
+
+        novos = M.enriquecer_sequencial(self.catalogo, ["drake", "botoes"], pausa=0)
+        self.assertEqual(list(novos), ["botoes"])

@@ -156,22 +156,50 @@ declarada. Os memes saem com 640 px, que é o teto do que o 9GAG serve.
 `audit` ordena por risco — muitas caixas, descrição sem instrução de uso. São os
 candidatos a errar o papel dos slots.
 
-## Modelos
+## Provedores
 
-Por variável de ambiente:
+Funciona com **Claude** ou **Gemini**. A chave presente decide sozinha; só
+precisa de `MEMEGEN_PROVIDER` se as duas estiverem definidas.
 
-- `MEMEGEN_ENRICH_MODEL` (padrão `claude-sonnet-5`) — enriquecimento em lote
-- `MEMEGEN_GENERATE_MODEL` (padrão `claude-opus-5`) — escolha e escrita
-- `ANTHROPIC_API_KEY` — obrigatória para `enrich` e `make`/`serve`; `sync` e a
-  navegação funcionam sem ela
-- `ANTHROPIC_WORKSPACE_ID` — só para chave de **organização**, que não é amarrada
-  a um workspace. A API recusa essas chaves sem o header dizendo qual workspace
-  usar. Chave já escopada a um workspace dispensa
+```console
+$ export GEMINI_API_KEY='...'      # ou ANTHROPIC_API_KEY
+$ ./memegen.py status              # mostra o provedor e os modelos escolhidos
+```
+
+A diferença prática é o custo de entrada: a API da Anthropic é pré-paga, sem
+tier gratuito; o Gemini tem cota mensal gratuita. Para um projeto pessoal que
+enriquece uma vez e gera alguns memes por dia, a cota gratuita costuma bastar.
+
+| | Anthropic | Gemini |
+|---|---|---|
+| Enriquecer os 836 | Batch API, ~1h, US$ 0,84 | sequencial, mais lento, dentro da cota |
+| Endpoint | `/v1/messages` | `/v1beta/interactions` |
+| Padrão enriquecer | `claude-sonnet-5` | `gemini-3.5-flash-lite` |
+| Padrão gerar | `claude-opus-5` | `gemini-3.8-flash` |
+
+No Gemini o enriquecimento roda **um template por vez**, porque não há API de
+lote. Ele grava depois de cada um: se a cota estourar ou você der `Ctrl + C`, o
+que já foi feito fica salvo e a próxima execução continua de onde parou. Use
+`--pausa` para espaçar as chamadas se bater no limite por minuto.
+
+## Variáveis de ambiente
+
+| Variável | Para quê |
+|---|---|
+| `ANTHROPIC_API_KEY` | chave da Anthropic |
+| `ANTHROPIC_WORKSPACE_ID` | só para chave de **organização** (a API recusa sem o header dizendo qual workspace usar); chave escopada a um workspace dispensa |
+| `GEMINI_API_KEY` | chave do Gemini — <https://aistudio.google.com/apikey> |
+| `MEMEGEN_PROVIDER` | `anthropic` ou `gemini`, quando as duas chaves existem |
+| `MEMEGEN_ENRICH_MODEL` | sobrescreve o modelo do enriquecimento |
+| `MEMEGEN_TRIAGE_MODEL` | sobrescreve o modelo da triagem |
+| `MEMEGEN_GENERATE_MODEL` | sobrescreve o modelo da geração |
+
+`sync` e a navegação de templates funcionam sem chave nenhuma.
 
 ## Testes
 
 ```console
-$ python3 -m unittest -v        # 48 testes, também sem dependências
+$ python3 -m unittest -v        # 69 testes, também sem dependências
 ```
 
 Não precisam de rede nem de chave: o catálogo vem de um fixture embutido e as

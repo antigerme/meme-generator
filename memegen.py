@@ -67,10 +67,41 @@ CHAVE = os.path.join(DADOS, "key.pem")
 BASE_9GAG = "https://meme.9gag.com"
 PAGINA_9GAG = BASE_9GAG + "/meme-generator/"
 
+# Dois provedores. A escolha e automatica pela chave presente, e
+# MEMEGEN_PROVIDER decide quando as duas estao definidas.
 API = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
 VERSAO_API = "2023-06-01"
-MODELO_ENRIQUECER = os.environ.get("MEMEGEN_ENRICH_MODEL", "claude-sonnet-5")
-MODELO_GERAR = os.environ.get("MEMEGEN_GENERATE_MODEL", "claude-opus-5")
+API_GEMINI = os.environ.get("GEMINI_BASE_URL",
+                            "https://generativelanguage.googleapis.com")
+
+PADROES = {
+    "anthropic": {"enriquecer": "claude-sonnet-5", "gerar": "claude-opus-5",
+                  "triar": "claude-haiku-4-5"},
+    "gemini": {"enriquecer": "gemini-3.5-flash-lite", "gerar": "gemini-3.8-flash",
+               "triar": "gemini-3.5-flash-lite"},
+}
+
+
+def provedor():
+    """Qual provedor usar. A chave presente decide; a variavel desempata."""
+    escolhido = (os.environ.get("MEMEGEN_PROVIDER") or "").strip().lower()
+    if escolhido:
+        if escolhido not in PADROES:
+            raise RuntimeError("MEMEGEN_PROVIDER deve ser 'anthropic' ou 'gemini'")
+        return escolhido
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.environ.get("GEMINI_API_KEY"):
+        return "gemini"
+    return "anthropic"
+
+
+def modelo_padrao(papel):
+    """Modelo para 'enriquecer', 'gerar' ou 'triar', conforme o provedor."""
+    env = {"enriquecer": "MEMEGEN_ENRICH_MODEL",
+           "gerar": "MEMEGEN_GENERATE_MODEL",
+           "triar": "MEMEGEN_TRIAGE_MODEL"}[papel]
+    return os.environ.get(env) or PADROES[provedor()][papel]
 
 # O editor do 9GAG posiciona as caixas num canvas de largura fixa, com altura
 # proporcional. Verificado nos 836 templates: nenhuma caixa ultrapassa esses
@@ -367,6 +398,143 @@ def texto_da_resposta(mensagem):
     return ""
 
 
+# ------------------------------------------------------------- provedor Gemini
+
+# A API do Gemini e o endpoint /interactions: `input` e uma lista de blocos e o
+# schema vai em `response_format` no topo, nao dentro de generationConfig como
+# no antigo generateContent.
+
+def chave_gemini():
+    k = os.environ.get("GEMINI_API_KEY")
+    if not k:
+        raise RuntimeError(
+            "defina GEMINI_API_KEY. Pegue em https://aistudio.google.com/apikey")
+    return k
+
+
+def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
+                  timeout=300):
+    """Uma interacao com o Gemini. Devolve (texto, uso)."""
+    carga = {"model": modelo, "input": blocos}
+    if sistema:
+        carga["system_instruction"] = sistema
+    if schema:
+        carga["response_format"] = {"type": "text",
+                                    "mime_type": "application/json",
+                                    "schema": schema}
+    url = API_GEMINI.rstrip("/") + "/v1beta/interactions"
+    cab = {"x-goog-api-key": chave_gemini(), "Content-Type": "application/json"}
+    req = Request(url, data=json.dumps(carga).encode("utf-8"), headers=cab)
+    try:
+        r = urlopen(req, timeout=timeout)
+        try:
+            resposta = json.loads(r.read().decode("utf-8"))
+        finally:
+            r.close()
+    except HTTPError as e:
+        try:
+            detalhe = e.read().decode("utf-8", "replace")[:500]
+        finally:
+            e.close()
+        try:
+            detalhe = json.loads(detalhe).get("error", {}).get("message", detalhe)
+        except ValueError:
+            pass
+        raise RuntimeError("Gemini respondeu %s: %s" % (e.code, detalhe))
+
+    texto = resposta.get("output_text")
+    if not texto:
+        # caminho alternativo documentado: o ultimo passo carrega o conteudo
+        for passo in reversed(resposta.get("steps") or []):
+            for bloco in passo.get("content") or []:
+                if bloco.get("text"):
+                    texto = bloco["text"]
+                    break
+            if texto:
+                break
+    if not texto:
+        raise RuntimeError("resposta do Gemini sem texto: %s"
+                           % json.dumps(resposta)[:300])
+    return texto, _uso_gemini(resposta)
+
+
+def _uso_gemini(resposta):
+    """Contagem de tokens. Os nomes variam entre versoes da API, entao
+    procuramos os que ja apareceram antes de desistir e devolver zero."""
+    u = (resposta.get("usage") or resposta.get("usageMetadata")
+         or resposta.get("usage_metadata") or {})
+
+    def pega(*nomes):
+        for n in nomes:
+            if isinstance(u.get(n), int):
+                return u[n]
+        return 0
+
+    return {"input": pega("input_tokens", "promptTokenCount", "inputTokens",
+                          "prompt_tokens"),
+            "output": pega("output_tokens", "candidatesTokenCount",
+                           "outputTokens", "completion_tokens"),
+            "cache_read": pega("cached_content_token_count",
+                               "cachedContentTokenCount"),
+            "cache_write": 0}
+
+
+# ------------------------------------------------- chamada unica, sem provedor
+
+def _blocos_anthropic(texto, imagem=None):
+    blocos = []
+    if imagem:
+        blocos.append(_bloco_imagem(imagem))
+    blocos.append({"type": "text", "text": texto})
+    return blocos
+
+
+def _blocos_gemini(texto, imagem=None):
+    blocos = [{"type": "text", "text": texto}]
+    if imagem:
+        with open(imagem, "rb") as f:
+            dados = base64.b64encode(f.read()).decode("ascii")
+        blocos.append({"type": "image", "data": dados, "mime_type": "image/jpeg"})
+    return blocos
+
+
+def gerar_json(sistema, texto, schema, papel, imagem=None, modelo=None,
+               max_tokens=4000, cachear_sistema=False):
+    """Pede uma resposta em JSON ao provedor ativo. Devolve (dados, uso).
+
+    `cachear_sistema` marca o ultimo bloco do sistema para prompt caching no
+    Anthropic; no Gemini nao ha equivalente explicito e o campo e ignorado.
+    """
+    modelo = modelo or modelo_padrao(papel)
+    qual = provedor()
+
+    if qual == "gemini":
+        bruto, uso = chamar_gemini(
+            "\n\n".join(sistema) if isinstance(sistema, list) else sistema,
+            _blocos_gemini(texto, imagem), schema, modelo, max_tokens)
+    else:
+        partes = sistema if isinstance(sistema, list) else [sistema]
+        blocos_sistema = []
+        for i, parte in enumerate(partes):
+            bloco = {"type": "text", "text": parte}
+            if cachear_sistema and i == len(partes) - 1:
+                bloco["cache_control"] = {"type": "ephemeral"}
+            blocos_sistema.append(bloco)
+        resposta = chamar_api("/v1/messages", {
+            "model": modelo, "max_tokens": max_tokens,
+            "system": blocos_sistema,
+            "messages": [{"role": "user",
+                          "content": _blocos_anthropic(texto, imagem)}],
+            "output_config": {"format": {"type": "json_schema", "schema": schema}},
+        })
+        bruto, uso = texto_da_resposta(resposta), _uso(resposta)
+
+    try:
+        return json.loads(bruto), uso
+    except ValueError:
+        raise RuntimeError("o modelo nao devolveu JSON valido: %s" % bruto[:300])
+
+
 # ------------------------------------------------------------- enriquecimento
 
 # O 9GAG entrega `description` (a historia do meme) e `keywords`, mas nao diz
@@ -483,7 +651,7 @@ def garantir_imagens(catalogo, ids, aviso=True):
 
 def enviar_lote(catalogo, ids, modelo=None):
     """Enfileira o enriquecimento na Batch API (metade do preco)."""
-    modelo = modelo or MODELO_ENRIQUECER
+    modelo = modelo or modelo_padrao("enriquecer")
     requisicoes = []
     for tid in ids:
         img = os.path.join(IMAGENS, tid + ".jpg")
@@ -509,6 +677,58 @@ def enviar_lote(catalogo, ids, modelo=None):
     print("lote %s criado com %d templates (%s)"
           % (lote["id"], len(requisicoes), modelo))
     return lote["id"]
+
+
+def enriquecer_sequencial(catalogo, ids, modelo=None, pausa=1.0):
+    """Enriquecimento um a um, para provedores sem API de lote.
+
+    Grava depois de cada template em vez de so no fim: uma cota estourada ou um
+    Ctrl+C no meio nao perdem o que ja foi feito, e a proxima execucao continua
+    de onde parou porque `contratos_pendentes` ja exclui o que tem contrato.
+    """
+    modelo = modelo or modelo_padrao("enriquecer")
+    contratos = ler_json(CONTRATOS, {})
+    novos = {}
+    erros = 0
+    total = len(ids)
+    print("%d templates, um a um com %s" % (total, modelo))
+
+    for n, tid in enumerate(ids, 1):
+        img = os.path.join(IMAGENS, tid + ".jpg")
+        if not os.path.exists(img):
+            erros += 1
+            continue
+        try:
+            dados, _ = gerar_json(SISTEMA_ENRIQUECER,
+                                  prompt_enriquecimento(catalogo[tid]),
+                                  ESQUEMA_CONTRATO, "enriquecer", imagem=img,
+                                  modelo=modelo, max_tokens=2000)
+        except RuntimeError as e:
+            texto = str(e)
+            if "429" in texto or "quota" in texto.lower() or "rate" in texto.lower():
+                print("  cota atingida em %s (%d/%d). O que ja foi feito esta "
+                      "gravado; rode de novo mais tarde para continuar."
+                      % (tid, n, total))
+                break
+            erros += 1
+            print("  %s: %s" % (tid, texto[:120]))
+            continue
+
+        dados["source_hash"] = catalogo[tid]["_hash"]
+        dados["enriched_at"] = agora()
+        dados["model"] = modelo
+        contratos[tid] = dados
+        novos[tid] = dados
+        gravar_json(CONTRATOS, contratos)      # grava a cada um: retomavel
+
+        if n % 10 == 0 or n == total:
+            print("  %d/%d" % (n, total))
+            sys.stdout.flush()
+        if pausa:
+            time.sleep(pausa)
+
+    print("contratos gravados: %d ok, %d com erro" % (len(novos), erros))
+    return novos
 
 
 def coletar_lote(lote_id, catalogo, intervalo=30):
@@ -676,25 +896,15 @@ def _uso(resposta):
             "cache_write": u.get("cache_creation_input_tokens", 0) or 0}
 
 
-def triar(situacao, catalogo, contratos, k=30, modelo="claude-haiku-4-5", nsfw=False):
+def triar(situacao, catalogo, contratos, k=30, modelo=None, nsfw=False):
     """Peneira o catalogo com um modelo barato. Devolve (ids, uso)."""
-    resposta = chamar_api("/v1/messages", {
-        "model": modelo,
-        "max_tokens": 1500,
-        "system": [
-            {"type": "text", "text": SISTEMA_TRIAGEM},
-            {"type": "text",
-             "text": u"CATALOGO\n\n" + texto_triagem(catalogo, contratos, nsfw),
-             "cache_control": {"type": "ephemeral"}},
-        ],
-        "messages": [{"role": "user",
-                      "content": u"Separe ate %d templates para esta situacao:\n\n%s"
-                                 % (k, situacao)}],
-        "output_config": {"format": {"type": "json_schema",
-                                     "schema": ESQUEMA_TRIAGEM}},
-    })
-    ids = json.loads(texto_da_resposta(resposta)).get("ids", [])
-    return [i for i in ids if i in contratos][:k], _uso(resposta)
+    dados, uso = gerar_json(
+        [SISTEMA_TRIAGEM, u"CATALOGO\n\n" + texto_triagem(catalogo, contratos, nsfw)],
+        u"Separe ate %d templates para esta situacao:\n\n%s" % (k, situacao),
+        ESQUEMA_TRIAGEM, "triar", modelo=modelo, max_tokens=1500,
+        cachear_sistema=True)
+    ids = dados.get("ids", [])
+    return [i for i in ids if i in contratos][:k], uso
 
 
 def sugerir(situacao, catalogo, contratos, n=3, modelo=None, modo="shortlist",
@@ -714,26 +924,16 @@ def sugerir(situacao, catalogo, contratos, n=3, modelo=None, modo="shortlist",
             contratos = dict((i, contratos[i]) for i in ids if i in contratos)
             catalogo = dict((i, catalogo[i]) for i in ids if i in catalogo)
 
-    resposta = chamar_api("/v1/messages", {
-        "model": modelo or MODELO_GERAR,
-        "max_tokens": 4000,
-        "system": [
-            {"type": "text", "text": SISTEMA_GERAR},
-            {"type": "text",
-             "text": u"CATALOGO DE TEMPLATES\n\n" + texto_catalogo(catalogo, contratos, nsfw),
-             "cache_control": {"type": "ephemeral"}},
-        ],
-        "messages": [{"role": "user",
-                      "content": u"Sugira %d memes para esta situacao:\n\n%s"
-                                 % (n, situacao)}],
-        "output_config": {"format": {"type": "json_schema",
-                                     "schema": ESQUEMA_RESULTADO}},
-    })
-    sugestoes = json.loads(texto_da_resposta(resposta)).get("sugestoes", [])
-    uso = _uso(resposta)
+    dados, uso = gerar_json(
+        [SISTEMA_GERAR,
+         u"CATALOGO DE TEMPLATES\n\n" + texto_catalogo(catalogo, contratos, nsfw)],
+        u"Sugira %d memes para esta situacao:\n\n%s" % (n, situacao),
+        ESQUEMA_RESULTADO, "gerar", modelo=modelo, cachear_sistema=True)
+    sugestoes = dados.get("sugestoes", [])
     uso["triagem"] = uso_triagem
     uso["candidatos"] = len(contratos)
     uso["modo"] = modo
+    uso["provedor"] = provedor()
     return sugestoes, uso
 
 
@@ -1843,17 +2043,24 @@ def cmd_enrich(args):
         print("todos os contratos estao em dia")
         return 0
 
-    print("%d templates a enriquecer com %s"
-          % (len(pendentes), args.model or MODELO_ENRIQUECER))
+    qual = provedor()
+    print("%d templates a enriquecer com %s (%s)"
+          % (len(pendentes), args.model or modelo_padrao("enriquecer"), qual))
     print("baixando imagens faltantes...")
     falhas = garantir_imagens(catalogo, pendentes)
     pendentes = [t for t in pendentes if t not in falhas]
 
     if args.dry_run:
-        print("[dry-run] enfileiraria %d requisicoes" % len(pendentes))
+        print("[dry-run] enviaria %d requisicoes" % len(pendentes))
         if pendentes:
             print("\nexemplo de prompt:\n")
             print(prompt_enriquecimento(catalogo[pendentes[0]]))
+        return 0
+
+    if qual == "gemini":
+        # sem API de lote: sequencial, com pausa entre chamadas para caber na
+        # cota gratuita, e gravando a cada template para poder retomar
+        enriquecer_sequencial(catalogo, pendentes, args.model, pausa=args.pausa)
         return 0
 
     lote = enviar_lote(catalogo, pendentes, args.model)
@@ -1909,11 +2116,19 @@ def cmd_status(args):
     print("imagens     : %d em disco" % imagens)
     print("bundle      : %s" % estado.get("templates", "-"))
     print("sincronizado: %s" % estado.get("sincronizado", "nunca"))
-    print("chave da API: %s" % ("definida" if os.environ.get("ANTHROPIC_API_KEY")
-                                else "ausente"))
-    ws = os.environ.get("ANTHROPIC_WORKSPACE_ID")
-    print("workspace   : %s" % (ws if ws else "nao definido (so preciso para "
-                                              "chave de organizacao)"))
+    qual = provedor()
+    print("provedor    : %s" % qual)
+    if qual == "anthropic":
+        print("  ANTHROPIC_API_KEY: %s"
+              % ("definida" if os.environ.get("ANTHROPIC_API_KEY") else "AUSENTE"))
+        ws = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+        print("  workspace        : %s"
+              % (ws if ws else "nao definido (so preciso para chave de organizacao)"))
+    else:
+        print("  GEMINI_API_KEY   : %s"
+              % ("definida" if os.environ.get("GEMINI_API_KEY") else "AUSENTE"))
+    for papel in ("enriquecer", "triar", "gerar"):
+        print("  modelo %-10s: %s" % (papel, modelo_padrao(papel)))
     return 0
 
 
@@ -1965,14 +2180,16 @@ def main(argv=None):
     e.add_argument("--wait", action="store_true", help="aguarda o lote terminar")
     e.add_argument("--limit", type=int, help="processa no maximo N templates")
     e.add_argument("--only", nargs="+", metavar="ID", help="enriquece ids especificos")
-    e.add_argument("--model", help="padrao: " + MODELO_ENRIQUECER)
+    e.add_argument("--model", help="depende do provedor; veja `status`")
+    e.add_argument("--pausa", type=float, default=1.0,
+                   help="segundos entre chamadas no modo sequencial (Gemini)")
     e.add_argument("--dry-run", action="store_true", help="mostra o que faria")
     e.set_defaults(func=cmd_enrich)
 
     m = sub.add_parser("make", help="sugere memes (texto; imagem so em `serve`)")
     m.add_argument("situacao")
     m.add_argument("-n", type=int, default=3)
-    m.add_argument("--model", help="padrao: " + MODELO_GERAR)
+    m.add_argument("--model", help="depende do provedor; veja `status`")
     m.add_argument("--modo", choices=["shortlist", "full"], default="shortlist")
     m.add_argument("--nsfw", action="store_true")
     m.set_defaults(func=cmd_make)
