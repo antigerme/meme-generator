@@ -4,11 +4,10 @@ __pycache__/
 venv/
 .env
 
-# Dados sincronizados do 9GAG e artefatos gerados (não versionar)
-data/templates/
-data/catalog.json
-data/contracts.json
-data/state.json
+# Dados sincronizados do 9GAG e artefatos derivados. Nada aqui é versionado:
+# o catálogo é espelho de conteúdo de terceiros e se reconstrói com
+# `memegen sync` + `memegen enrich` + `memegen index`.
+data/
 out/
 
 # Fontes baixadas (licença própria — ver fonts/README.md)
