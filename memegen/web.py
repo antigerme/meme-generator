@@ -12,13 +12,17 @@ que rodar a geração de novo só para trocar uma palavra mataria o uso.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import traceback
+import unicodedata
+import zipfile
+from datetime import datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 from . import catalog as C
@@ -40,6 +44,16 @@ class SuggestBody(BaseModel):
 class RenderBody(BaseModel):
     template_id: str
     textos: dict[str, str]
+
+
+class ItemZip(BaseModel):
+    template_id: str
+    textos: dict[str, str]
+
+
+class ZipBody(BaseModel):
+    itens: list[ItemZip]
+    situacao: str = ""
 
 
 def _catalog() -> dict:
@@ -222,6 +236,60 @@ def rerenderizar(body: RenderBody) -> dict:
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
         raise HTTPException(500, f"falha ao renderizar: {e}") from e
+
+
+def _slug(texto: str, limite: int = 40) -> str:
+    """Transforma a situação num pedaço de nome de arquivo utilizável."""
+    plano = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
+    plano = re.sub(r"[^a-zA-Z0-9]+", "-", plano).strip("-").lower()
+    return plano[:limite].strip("-")
+
+
+@app.post("/api/zip")
+def baixar_todos(body: ZipBody) -> Response:
+    """Empacota os memes num ZIP.
+
+    Recebe os textos em vez de URLs de render porque o que interessa é o estado
+    atual dos campos — depois das edições —, não o que o modelo escreveu. Como o
+    render é cacheado por conteúdo, reempacotar o que já foi visto na tela não
+    redesenha nada.
+    """
+    cat = _catalog()
+    if not body.itens:
+        raise HTTPException(400, "nada para baixar")
+
+    buf = io.BytesIO()
+    usados: set[str] = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for i, item in enumerate(body.itens, 1):
+            t = cat.get(item.template_id)
+            if not t:
+                continue
+            validos = {b["id"] for b in t["textBoxes"]}
+            textos = {k: v for k, v in item.textos.items() if k in validos}
+            try:
+                url = _renderizar(t, textos)
+            except Exception as e:  # noqa: BLE001
+                traceback.print_exc()
+                raise HTTPException(500, f"falha ao renderizar {item.template_id}: {e}") from e
+
+            nome = f"{i:02d}-{item.template_id}.jpg"
+            while nome in usados:                 # o mesmo template pode vir duas vezes
+                nome = f"{i:02d}-{item.template_id}-{len(usados)}.jpg"
+            usados.add(nome)
+            z.write(config.OUT / url.rsplit("/", 1)[-1], nome)
+
+    if not usados:
+        raise HTTPException(400, "nenhum template válido")
+
+    carimbo = datetime.now().strftime("%Y%m%d-%H%M")
+    miolo = _slug(body.situacao) or "memes"
+    arquivo = f"memegen-{miolo}-{carimbo}.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{arquivo}"'},
+    )
 
 
 _NOME_SEGURO = re.compile(r"^[A-Za-z0-9_.-]+$")

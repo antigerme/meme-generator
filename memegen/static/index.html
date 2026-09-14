@@ -91,6 +91,11 @@ button.leve:hover, a.leve:hover { border-color: var(--accent); }
 }
 .exemplos button:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
 
+.barra {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+}
+
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px; margin-top: 16px;
@@ -179,6 +184,10 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
     <label><input type="checkbox" id="nsfw" style="width:auto"> incluir nsfw</label>
   </div>
   <div id="erro" class="erro oculto"></div>
+  <div id="barra" class="barra oculto">
+    <span id="conta-resultados" class="meta"></span>
+    <button class="leve" id="baixar-todos">Baixar todos</button>
+  </div>
   <div id="resultados"></div>
   <div id="uso" class="uso"></div>
 </section>
@@ -294,6 +303,7 @@ function ligarEdicao(card, tid) {
 function cartao(s) {
   const el = document.createElement('div');
   el.className = 'card';
+  el.dataset.template = s.id;
   const campos = s.caixas.map(b => {
     const v = s.textos[b.id] ?? '';
     const max = b.max_chars || 0;
@@ -333,6 +343,7 @@ $('#gerar').onclick = async () => {
   btn.disabled = true;
   btn.innerHTML = '<span class="girando"></span>Gerando…';
   $('#erro').classList.add('oculto');
+  $('#barra').classList.add('oculto');
   $('#resultados').innerHTML = '';
   $('#uso').textContent = '';
 
@@ -349,6 +360,9 @@ $('#gerar').onclick = async () => {
       $('#resultados').innerHTML = '<div class="vazio">Nenhuma sugestão veio de volta.</div>';
     } else {
       r.sugestoes.forEach(s => $('#resultados').appendChild(cartao(s)));
+      const n = r.sugestoes.length;
+      $('#conta-resultados').textContent = `${n} meme${n === 1 ? '' : 's'}`;
+      $('#barra').classList.remove('oculto');
     }
     const u = r.uso || {};
     const t = u.triagem;
@@ -362,6 +376,51 @@ $('#gerar').onclick = async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Gerar memes';
+  }
+};
+
+/** Lê os campos como estão agora — o zip leva suas edições, não o texto original. */
+function itensAtuais() {
+  return [...document.querySelectorAll('#resultados .card')].map(card => {
+    const textos = {};
+    card.querySelectorAll('input[data-box]').forEach(i => textos[i.dataset.box] = i.value);
+    return {template_id: card.dataset.template, textos};
+  });
+}
+
+$('#baixar-todos').onclick = async (ev) => {
+  const btn = ev.currentTarget;
+  const itens = itensAtuais();
+  if (!itens.length) return;
+
+  const rotulo = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="girando"></span>Compactando…';
+  try {
+    const r = await fetch('/api/zip', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({itens, situacao: $('#situacao').value.trim()}),
+    });
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { msg = (await r.json()).detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    const cd = r.headers.get('Content-Disposition') || '';
+    const nome = (cd.match(/filename="([^"]+)"/) || [])[1] || 'memegen.zip';
+
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (e) {
+    $('#erro').textContent = e.message;
+    $('#erro').classList.remove('oculto');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = rotulo;
   }
 };
 

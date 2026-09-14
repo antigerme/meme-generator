@@ -147,3 +147,79 @@ def test_suggest_sem_contratos_avisa(cliente, monkeypatch, tmp_path):
     r = cliente.post("/api/suggest", json={"situacao": "algo"})
     assert r.status_code == 503
     assert "enrich" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------- zip
+
+def _zip_de(cliente, itens, situacao=""):
+    return cliente.post("/api/zip", json={"itens": itens, "situacao": situacao})
+
+
+def test_zip_empacota_todos_os_memes(cliente):
+    import io
+    import zipfile
+    if not (config.TEMPLATE_IMAGES / f"{TID}.jpg").exists():
+        pytest.skip("imagens não baixadas")
+
+    r = _zip_de(cliente, [
+        {"template_id": TID, "textos": {"text-0": "antes", "text-1": "depois"}},
+        {"template_id": "two_buttons",
+         "textos": {"text-0": "a", "text-1": "b", "text-2": "eu"}},
+    ], "escolher entre dormir cedo ou terminar a série")
+
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    assert z.namelist() == ["01-drake_hotline_bling.jpg", "02-two_buttons.jpg"]
+    assert z.testzip() is None
+    for nome in z.namelist():
+        assert z.read(nome).startswith(b"\xff\xd8")   # JPEG de verdade
+
+
+def test_zip_usa_o_texto_atual_e_nao_o_gerado(cliente):
+    """O botão baixa o que está nos campos agora, depois das edições."""
+    import io
+    import zipfile
+    if not (config.TEMPLATE_IMAGES / f"{TID}.jpg").exists():
+        pytest.skip("imagens não baixadas")
+
+    original = {"template_id": TID, "textos": {"text-0": "antes", "text-1": "depois"}}
+    editado = {"template_id": TID, "textos": {"text-0": "EDITADO", "text-1": "depois"}}
+    a = zipfile.ZipFile(io.BytesIO(_zip_de(cliente, [original]).content)).read(
+        "01-drake_hotline_bling.jpg")
+    b = zipfile.ZipFile(io.BytesIO(_zip_de(cliente, [editado]).content)).read(
+        "01-drake_hotline_bling.jpg")
+    assert a != b
+
+
+def test_zip_nomeia_pelo_texto_da_situacao(cliente):
+    if not (config.TEMPLATE_IMAGES / f"{TID}.jpg").exists():
+        pytest.skip("imagens não baixadas")
+    r = _zip_de(cliente, [{"template_id": TID, "textos": {"text-0": "x"}}],
+                "Reunião!! que podia ter sido um e-mail")
+    cd = r.headers["content-disposition"]
+    assert "reuniao-que-podia-ter-sido-um-e-mail" in cd   # sem acento nem pontuação
+    assert cd.endswith('.zip"')
+
+
+def test_zip_do_mesmo_template_duas_vezes_nao_colide(cliente):
+    import io
+    import zipfile
+    if not (config.TEMPLATE_IMAGES / f"{TID}.jpg").exists():
+        pytest.skip("imagens não baixadas")
+    r = _zip_de(cliente, [
+        {"template_id": TID, "textos": {"text-0": "um"}},
+        {"template_id": TID, "textos": {"text-0": "dois"}},
+    ])
+    nomes = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert len(nomes) == len(set(nomes)) == 2
+
+
+def test_zip_vazio_e_recusado(cliente):
+    assert _zip_de(cliente, []).status_code == 400
+
+
+def test_zip_com_template_inexistente(cliente):
+    r = _zip_de(cliente, [{"template_id": "nao_existe", "textos": {}}])
+    assert r.status_code == 400

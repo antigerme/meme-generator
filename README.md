@@ -32,6 +32,11 @@ o limite do contrato. Editar qualquer campo re-renderiza a imagem na hora, sem
 chamar o modelo de novo: texto de meme quase sempre precisa de um retoque, e
 ter que regerar tudo para trocar uma palavra mataria o uso.
 
+Com mais de um resultado aparece **Baixar todos**, que empacota num ZIP nomeado
+pela situação (`memegen-escolher-entre-dormir-cedo-20260914-1804.zip`). O ZIP é
+montado a partir dos campos como estão na tela, não do que o modelo escreveu —
+suas edições vão junto.
+
 **Templates** navega e busca os 836. A busca casa também pela função do
 contrato, então "dilema" encontra o Two Buttons — coisa que a busca do próprio
 9GAG, que é `includes()` sobre nome e keywords, não faz. Clicar num template
@@ -237,7 +242,7 @@ modelo escreve e a precisão dos contratos que o `enrich` produz. Rode
 `memegen audit` depois do primeiro enriquecimento.
 
 ```console
-$ python -m pytest tests/ -q          # 40 testes
+$ python -m pytest tests/ -q          # 46 testes
 $ python tools/download_all.py        # todas as imagens (37 MB)
 $ python tools/validate_render.py     # renderiza e mede os 836
 $ python tools/bench_retrieve.py      # qualidade da busca
