@@ -97,7 +97,7 @@ Três modos de seleção, medidos:
 
 | Modo | Custo/meme (Opus 5) | Precisa de |
 |---|---:|---|
-| `vetorial` | $0,038 | índice local (`sentence-transformers`) |
+| `vetorial` | $0,038 | índice local (`sentence-transformers`, ~2,2 GB) |
 | `shortlist` | $0,060 | nada |
 | `full` | $0,483 | nada |
 
@@ -107,6 +107,20 @@ cache está frio quase sempre, então o número relevante é o de cache frio.
 
 O padrão é `auto`: usa busca vetorial se houver índice construído, e cai para a
 triagem por LLM se não houver.
+
+O modelo de embedding importa mais do que parece. Medido em 10 situações de
+teste, com contratos escritos à mão competindo contra 826 distratores
+(`tools/bench_retrieve.py`):
+
+| Modelo | top-5 | top-30 |
+|---|---:|---:|
+| paraphrase-multilingual-MiniLM-L12-v2 (~120 MB) | 4/10 | 7/10 |
+| intfloat/multilingual-e5-large (~2,2 GB), padrão | 9/10 | 10/10 |
+
+top-30 é a métrica que decide, porque é o conjunto que chega ao modelo gerador.
+Com o modelo pequeno, em 30% dos casos o meme certo nunca chega — e aí nenhum
+modelo de geração consegue acertar. São 10 casos, então é sinal forte, não
+prova; vale repetir o benchmark com os contratos reais depois do `enrich`.
 
 ### Renderização
 
@@ -175,6 +189,29 @@ Definidos por variável de ambiente:
 
 A escrita é onde a qualidade aparece: é fácil um modelo escolher o template
 certo e escrever um texto sem graça. Vale medir antes de economizar aqui.
+
+## O que está validado
+
+| Etapa | Como foi verificada |
+|---|---|
+| `sync` | executada ao vivo contra o 9GAG; 836 templates baixados e parseados |
+| geometria | 836 templates, 1.748 caixas: renderizadas e medidas contra o retângulo declarado. Zero vazamento |
+| `render` | 836/836 sem erro (`tools/validate_render.py`) |
+| `catalog` | diff incremental, carimbo de `source_hash`, testes unitários |
+| `retrieve` | índice e busca reais, com benchmark contra gabarito |
+| `enrich` | formato das requisições, parsing e caminhos de erro, com cliente falso |
+| `generate` | montagem do prompt, cache, parsing e seleção de modo, com cliente falso |
+
+O que **não** está validado, e só a API real responde: a qualidade do que o
+modelo escreve e a precisão dos contratos que o `enrich` produz. Rode
+`memegen audit` depois do primeiro enriquecimento.
+
+```console
+$ python -m pytest tests/ -q          # 27 testes
+$ python tools/download_all.py        # todas as imagens (37 MB)
+$ python tools/validate_render.py     # renderiza e mede os 836
+$ python tools/bench_retrieve.py      # qualidade da busca
+```
 
 ## Dados
 

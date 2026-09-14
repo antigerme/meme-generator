@@ -36,13 +36,28 @@ from pathlib import Path
 from . import catalog as C
 from . import config
 
-# multilíngue e leve; funciona bem em pt-BR e roda em CPU
-DEFAULT_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+# Medido sobre 10 situações em pt-BR, com contratos escritos à mão competindo
+# contra 826 distratores (ver tools/bench_retrieve.py). O que importa é top-30,
+# porque é esse conjunto que vai para o modelo gerador:
+#
+#   paraphrase-multilingual-MiniLM-L12-v2   top-5  4/10   top-30  7/10   (~120 MB)
+#   intfloat/multilingual-e5-large          top-5 10/10   top-30 10/10   (~2,2 GB)
+#
+# O modelo pequeno deixa o meme certo de fora em 30% dos casos, e nesses o
+# gerador nunca tem chance de acertar. O grande custa disco e uma carga mais
+# lenta, mas roda em CPU e só é usado na indexação e na consulta.
+DEFAULT_MODEL = "intfloat/multilingual-e5-large"
+FAST_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 INDEX_PATH = config.DATA / "index.npz"
 INDEX_META = config.DATA / "index.json"
 
 _model = None
+
+
+def _prefixos(name: str) -> tuple[str, str]:
+    """A família e5 foi treinada com prefixos e perde qualidade sem eles."""
+    return ("query: ", "passage: ") if "e5" in name.lower() else ("", "")
 
 
 def _load_model(name: str):
@@ -76,10 +91,12 @@ def build(contracts: dict | None = None, model_name: str = DEFAULT_MODEL) -> int
     if not contracts:
         raise RuntimeError("nenhum contrato — rode `memegen enrich` antes")
 
+    _, pre_doc = _prefixos(model_name)
     ids = sorted(contracts)
-    docs = [_document(contracts[i]) for i in ids]
+    docs = [pre_doc + _document(contracts[i]) for i in ids]
     model = _load_model(model_name)
-    vecs = model.encode(docs, normalize_embeddings=True, show_progress_bar=True)
+    vecs = model.encode(docs, normalize_embeddings=True, batch_size=32,
+                        show_progress_bar=True)
 
     INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(INDEX_PATH, vectors=np.asarray(vecs, dtype="float32"))
@@ -110,7 +127,8 @@ def search(situacao: str, k: int = 30) -> list[str]:
     vectors = np.load(INDEX_PATH)["vectors"]
 
     model = _load_model(meta["model"])
-    q = model.encode([situacao], normalize_embeddings=True)[0]
+    pre_q, _ = _prefixos(meta["model"])
+    q = model.encode([pre_q + situacao], normalize_embeddings=True)[0]
     scores = vectors @ q  # vetores normalizados -> produto escalar é cosseno
     top = np.argsort(-scores)[:k]
     return [meta["ids"][i] for i in top]
