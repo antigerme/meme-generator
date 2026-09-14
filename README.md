@@ -18,6 +18,28 @@ $ memegen make "passei a tarde inteira otimizando uma query que roda uma vez por
    -> out/01_grus_plan.jpg
 ```
 
+## Interface web
+
+```console
+$ memegen serve
+memegen em http://127.0.0.1:8000
+```
+
+Duas abas. **Gerar** recebe a situação e devolve os memes já renderizados, com
+um campo por caixa de texto — cada um rotulado com o *papel* daquela caixa ("a
+opção rejeitada", "quem enfrenta o dilema") e com contador de caracteres contra
+o limite do contrato. Editar qualquer campo re-renderiza a imagem na hora, sem
+chamar o modelo de novo: texto de meme quase sempre precisa de um retoque, e
+ter que regerar tudo para trocar uma palavra mataria o uso.
+
+**Templates** navega e busca os 836. A busca casa também pela função do
+contrato, então "dilema" encontra o Two Buttons — coisa que a busca do próprio
+9GAG, que é `includes()` sobre nome e keywords, não faz. Clicar num template
+abre a história do meme, para que serve, quando usar e o papel de cada caixa.
+
+O servidor escuta em localhost e não tem autenticação. É ferramenta pessoal,
+não serviço — não exponha para fora da máquina.
+
 ## Como funciona
 
 O gerador do 9GAG é totalmente estático — não existe API. O catálogo de 836
@@ -153,6 +175,12 @@ Para o visual original, coloque `Impact.ttf` em `fonts/` — veja `fonts/README.
 $ memegen sync                 # baixa o catálogo (836 templates)
 $ memegen enrich --wait        # gera os contratos — ~$0,84, leva até 1h
 $ memegen index                # índice de busca local (opcional)
+$ memegen serve                # interface web em localhost:8000
+```
+
+Ou pela linha de comando, sem servidor:
+
+```console
 $ memegen make "sua situação"
 ```
 
@@ -174,6 +202,7 @@ Um cron semanal dá conta.
 | `memegen index` | (re)constrói o índice de busca vetorial |
 | `memegen make "situação"` | gera memes |
 | `memegen status` | estado local |
+| `memegen serve` | abre a interface web local |
 | `memegen audit` | lista os contratos que merecem revisão manual |
 
 `memegen audit` ordena por risco — templates com muitas caixas, cuja descrição
@@ -201,13 +230,14 @@ certo e escrever um texto sem graça. Vale medir antes de economizar aqui.
 | `retrieve` | índice e busca reais, com benchmark contra gabarito |
 | `enrich` | formato das requisições, parsing e caminhos de erro, com cliente falso |
 | `generate` | montagem do prompt, cache, parsing e seleção de modo, com cliente falso |
+| `web` | endpoints, cache de render, rejeição de caminho hostil; laço de edição exercitado em navegador real |
 
 O que **não** está validado, e só a API real responde: a qualidade do que o
 modelo escreve e a precisão dos contratos que o `enrich` produz. Rode
 `memegen audit` depois do primeiro enriquecimento.
 
 ```console
-$ python -m pytest tests/ -q          # 27 testes
+$ python -m pytest tests/ -q          # 40 testes
 $ python tools/download_all.py        # todas as imagens (37 MB)
 $ python tools/validate_render.py     # renderiza e mede os 836
 $ python tools/bench_retrieve.py      # qualidade da busca

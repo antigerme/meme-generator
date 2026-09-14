@@ -156,6 +156,12 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    from .web import serve
+    serve(host=args.host, port=args.port, reload=args.reload)
+    return 0
+
+
 def cmd_index(args) -> int:
     config.ensure_dirs()
     from . import retrieve
@@ -223,6 +229,12 @@ def main(argv=None) -> int:
 
     st = sub.add_parser("status", help="estado local")
     st.set_defaults(func=cmd_status)
+
+    w = sub.add_parser("serve", help="abre a interface web local")
+    w.add_argument("--host", default="127.0.0.1")
+    w.add_argument("--port", type=int, default=8000)
+    w.add_argument("--reload", action="store_true", help="recarrega ao editar o código")
+    w.set_defaults(func=cmd_serve)
 
     i = sub.add_parser("index", help="(re)constrói o índice de busca vetorial")
     i.set_defaults(func=cmd_index)

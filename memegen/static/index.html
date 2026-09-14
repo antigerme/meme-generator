@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>memegen</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf8;
+  --surface: #ffffff;
+  --border: #e3e0da;
+  --text: #1b1a17;
+  --muted: #6d6a63;
+  --accent: #b8502a;
+  --accent-text: #ffffff;
+  --warn-bg: #fdf4e3;
+  --warn-border: #e5c98c;
+  --warn-text: #6b4e12;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171614;
+    --surface: #211f1c;
+    --border: #35322d;
+    --text: #edeae4;
+    --muted: #9b968c;
+    --accent: #d4713f;
+    --accent-text: #171614;
+    --warn-bg: #2e2617;
+    --warn-border: #5c4a23;
+    --warn-text: #e0c68d;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0;
+  background: var(--bg); color: var(--text);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); font-size: 13px; }
+
+nav { display: flex; gap: 4px; margin: 20px 0 18px; border-bottom: 1px solid var(--border); }
+nav button {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 8px 14px; font: inherit; font-weight: 500; color: var(--muted);
+  cursor: pointer; margin-bottom: -1px;
+}
+nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+
+.aviso {
+  background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text);
+  padding: 10px 13px; border-radius: var(--radius); font-size: 14px; margin-bottom: 16px;
+}
+.aviso code { background: rgba(0,0,0,.09); padding: 1px 5px; border-radius: 4px; }
+
+textarea, input[type=text], select {
+  width: 100%; font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 13px;
+}
+textarea { min-height: 96px; resize: vertical; }
+textarea:focus, input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.linha { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 11px; }
+.linha label { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+select { width: auto; padding: 7px 10px; font-size: 14px; }
+
+button.primario {
+  background: var(--accent); color: var(--accent-text); border: none;
+  border-radius: var(--radius); padding: 10px 20px; font: inherit; font-weight: 600;
+  cursor: pointer;
+}
+button.primario:disabled { opacity: .5; cursor: default; }
+button.leve, a.leve {
+  display: inline-block; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px;
+  font: inherit; font-size: 13px; line-height: 1.4; cursor: pointer;
+  text-decoration: none;
+}
+button.leve:hover, a.leve:hover { border-color: var(--accent); }
+
+.exemplos { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+.exemplos button {
+  background: none; border: 1px dashed var(--border); color: var(--muted);
+  border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.exemplos button:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; margin-top: 16px;
+}
+.card h3 { margin: 0 0 2px; font-size: 16px; }
+.meta { color: var(--muted); font-size: 12.5px; }
+.porque { font-size: 14px; margin: 9px 0 13px; color: var(--muted); font-style: italic; }
+
+.duas { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; align-items: start; }
+@media (max-width: 720px) { .duas { grid-template-columns: 1fr; } }
+.duas img {
+  width: 100%; max-height: 62vh; object-fit: contain; object-position: top;
+  border-radius: 7px; display: block; border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.campo { margin-bottom: 11px; }
+.campo label {
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: 12px; color: var(--muted); margin-bottom: 4px;
+}
+.campo .papel { font-weight: 600; color: var(--text); }
+.campo .conta { font-variant-numeric: tabular-nums; }
+.campo .conta.estourou { color: var(--accent); font-weight: 600; }
+.campo input { font-size: 14px; padding: 8px 11px; }
+
+.grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; font: inherit; color: inherit; }
+.tile:hover { border-color: var(--accent); }
+.tile img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--bg); }
+.tile div { padding: 7px 9px; font-size: 12.5px; line-height: 1.35; }
+.tile small { color: var(--muted); display: block; font-size: 11.5px; }
+
+dialog {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  color: var(--text); max-width: 560px; width: calc(100% - 32px); padding: 0;
+}
+dialog::backdrop { background: rgba(0,0,0,.5); }
+.dlg { padding: 18px; }
+.dlg img { width: 100%; max-height: 300px; object-fit: contain; border-radius: 7px; background: var(--bg); }
+.dlg h3 { margin: 13px 0 3px; }
+.dlg p { font-size: 14px; }
+.dlg .rotulo { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 14px; }
+.tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.tags span { background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; font-size: 12px; }
+
+.vazio { color: var(--muted); text-align: center; padding: 40px 16px; font-size: 14px; }
+.erro { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); padding: 11px 13px; border-radius: var(--radius); margin-top: 16px; font-size: 14px; }
+.uso { color: var(--muted); font-size: 12px; margin-top: 18px; font-variant-numeric: tabular-nums; }
+.oculto { display: none !important; }
+.girando { display: inline-block; width: 13px; height: 13px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: gira .7s linear infinite; vertical-align: -2px; margin-right: 7px; }
+@keyframes gira { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>memegen</h1>
+  <span class="sub" id="status">carregando…</span>
+</header>
+
+<div id="aviso" class="aviso oculto"></div>
+
+<nav>
+  <button id="tab-gerar" aria-selected="true">Gerar</button>
+  <button id="tab-navegar" aria-selected="false">Templates</button>
+</nav>
+
+<section id="painel-gerar">
+  <textarea id="situacao" placeholder="Descreva a situação. Pode ser um desabafo, um trecho de conversa, um bug, uma reunião — qualquer coisa."></textarea>
+  <div class="exemplos" id="exemplos"></div>
+  <div class="linha">
+    <button class="primario" id="gerar">Gerar memes</button>
+    <label>sugestões
+      <select id="n"><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+    </label>
+    <label>seleção
+      <select id="modo">
+        <option value="auto" selected>automática</option>
+        <option value="vetorial">busca vetorial</option>
+        <option value="shortlist">triagem por modelo</option>
+        <option value="full">catálogo inteiro</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="nsfw" style="width:auto"> incluir nsfw</label>
+  </div>
+  <div id="erro" class="erro oculto"></div>
+  <div id="resultados"></div>
+  <div id="uso" class="uso"></div>
+</section>
+
+<section id="painel-navegar" class="oculto">
+  <input type="text" id="busca" placeholder="Buscar por nome, keyword ou função…">
+  <div class="meta" id="conta-busca" style="margin-top:8px"></div>
+  <div class="grade" id="grade"></div>
+  <div style="text-align:center;margin-top:18px">
+    <button class="leve" id="mais">Carregar mais</button>
+  </div>
+</section>
+
+</div>
+
+<dialog id="dlg"><div class="dlg" id="dlg-corpo"></div></dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/* ---------------------------------------------------------------- status */
+async function carregarStatus() {
+  try {
+    const s = await api('/api/status');
+    $('#status').textContent =
+      `${s.templates} templates · ${s.contratos} contratos` +
+      (s.indice ? ' · índice pronto' : '');
+    if (s.aviso) {
+      $('#aviso').innerHTML = esc(s.aviso).replace(/`([^`]+)`/g, '<code>$1</code>');
+      $('#aviso').classList.remove('oculto');
+    }
+    $('#gerar').disabled = !s.pronto;
+  } catch (e) {
+    $('#status').textContent = 'servidor indisponível';
+  }
+}
+
+/* ---------------------------------------------------------------- abas */
+function aba(qual) {
+  const gerar = qual === 'gerar';
+  $('#tab-gerar').setAttribute('aria-selected', gerar);
+  $('#tab-navegar').setAttribute('aria-selected', !gerar);
+  $('#painel-gerar').classList.toggle('oculto', !gerar);
+  $('#painel-navegar').classList.toggle('oculto', gerar);
+  if (!gerar && !$('#grade').children.length) buscar(true);
+}
+$('#tab-gerar').onclick = () => aba('gerar');
+$('#tab-navegar').onclick = () => aba('navegar');
+
+/* ---------------------------------------------------------------- gerar */
+const EXEMPLOS = [
+  'passei a tarde otimizando uma query que roda uma vez por mês',
+  'mandei o email e até hoje ninguém respondeu',
+  'troquei de framework de novo e o antigo funcionava bem',
+  'reunião que podia ter sido um email',
+  'sábado à noite sem nada para fazer',
+];
+$('#exemplos').innerHTML = EXEMPLOS.map(e =>
+  `<button data-t="${esc(e)}">${esc(e)}</button>`).join('');
+$('#exemplos').onclick = e => {
+  const b = e.target.closest('button');
+  if (b) { $('#situacao').value = b.dataset.t; $('#situacao').focus(); }
+};
+
+/** Re-renderiza com debounce enquanto o texto é editado. */
+function ligarEdicao(card, tid) {
+  const img = card.querySelector('img');
+  let timer = null, pedido = 0;
+
+  const atualizar = async () => {
+    const textos = {};
+    card.querySelectorAll('input[data-box]').forEach(i => textos[i.dataset.box] = i.value);
+    const meu = ++pedido;
+    try {
+      const r = await api('/api/render', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({template_id: tid, textos}),
+      });
+      if (meu === pedido) {            // descarta resposta de digitação antiga
+        img.src = r.render;
+        card.querySelector('.baixar').href = r.render;
+      }
+    } catch (e) { /* mantém a imagem anterior */ }
+  };
+
+  card.querySelectorAll('input[data-box]').forEach(inp => {
+    inp.oninput = () => {
+      const max = Number(inp.dataset.max || 0);
+      const conta = inp.closest('.campo').querySelector('.conta');
+      if (conta) {
+        conta.textContent = max ? `${inp.value.length}/${max}` : inp.value.length;
+        conta.classList.toggle('estourou', max > 0 && inp.value.length > max);
+      }
+      clearTimeout(timer);
+      timer = setTimeout(atualizar, 400);
+    };
+  });
+}
+
+function cartao(s) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  const campos = s.caixas.map(b => {
+    const v = s.textos[b.id] ?? '';
+    const max = b.max_chars || 0;
+    return `<div class="campo">
+      <label>
+        <span class="papel">${esc(b.papel || b.id)}</span>
+        <span class="conta${max && v.length > max ? ' estourou' : ''}">${max ? v.length + '/' + max : v.length}</span>
+      </label>
+      <input type="text" data-box="${esc(b.id)}" data-max="${max}" value="${esc(v)}">
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <h3>${esc(s.nome)}</h3>
+    <div class="meta">${s.ano ? s.ano + ' · ' : ''}#${s.rank + 1} em popularidade</div>
+    ${s.porque ? `<div class="porque">${esc(s.porque)}</div>` : ''}
+    <div class="duas">
+      <img src="${esc(s.render)}" alt="${esc(s.nome)}">
+      <div>
+        ${campos}
+        <div class="linha" style="margin-top:14px">
+          <a class="leve baixar" href="${esc(s.render)}" download style="text-decoration:none">Baixar</a>
+          <button class="leve historia" data-id="${esc(s.id)}">História do meme</button>
+        </div>
+      </div>
+    </div>`;
+  ligarEdicao(el, s.id);
+  el.querySelector('.historia').onclick = () => abrirDetalhe(s.id);
+  return el;
+}
+
+$('#gerar').onclick = async () => {
+  const situacao = $('#situacao').value.trim();
+  if (!situacao) { $('#situacao').focus(); return; }
+
+  const btn = $('#gerar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="girando"></span>Gerando…';
+  $('#erro').classList.add('oculto');
+  $('#resultados').innerHTML = '';
+  $('#uso').textContent = '';
+
+  try {
+    const r = await api('/api/suggest', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        situacao, n: Number($('#n').value),
+        modo: $('#modo').value, nsfw: $('#nsfw').checked,
+      }),
+    });
+    if (!r.sugestoes.length) {
+      $('#resultados').innerHTML = '<div class="vazio">Nenhuma sugestão veio de volta.</div>';
+    } else {
+      r.sugestoes.forEach(s => $('#resultados').appendChild(cartao(s)));
+    }
+    const u = r.uso || {};
+    const t = u.triagem;
+    $('#uso').textContent =
+      `modo ${u.modo} · ${u.candidatos} candidatos · ` +
+      (t ? `triagem ${t.input}+${t.output} tok · ` : '') +
+      `geração ${u.input}+${u.output} tok`;
+  } catch (e) {
+    $('#erro').textContent = e.message;
+    $('#erro').classList.remove('oculto');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Gerar memes';
+  }
+};
+
+$('#situacao').onkeydown = e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') $('#gerar').click();
+};
+
+/* ---------------------------------------------------------------- navegar */
+let offset = 0, termo = '', total = 0;
+
+async function buscar(zerar) {
+  if (zerar) { offset = 0; $('#grade').innerHTML = ''; }
+  try {
+    const r = await api(`/api/templates?q=${encodeURIComponent(termo)}&offset=${offset}&limit=60`);
+    total = r.total;
+    $('#conta-busca').textContent = `${r.total} template${r.total === 1 ? '' : 's'}`;
+    r.itens.forEach(t => {
+      const b = document.createElement('button');
+      b.className = 'tile';
+      b.innerHTML = `<img src="${esc(t.img)}" loading="lazy" alt="">
+        <div>${esc(t.nome)}<small>${t.caixas.length} caixas${t.ano ? ' · ' + t.ano : ''}</small></div>`;
+      b.onclick = () => abrirDetalhe(t.id);
+      $('#grade').appendChild(b);
+    });
+    offset += r.itens.length;
+    $('#mais').classList.toggle('oculto', offset >= total);
+  } catch (e) {
+    $('#conta-busca').textContent = e.message;
+  }
+}
+
+let tBusca = null;
+$('#busca').oninput = () => {
+  clearTimeout(tBusca);
+  tBusca = setTimeout(() => { termo = $('#busca').value.trim(); buscar(true); }, 250);
+};
+$('#mais').onclick = () => buscar(false);
+
+/* ---------------------------------------------------------------- detalhe */
+async function abrirDetalhe(tid) {
+  const d = $('#dlg');
+  $('#dlg-corpo').innerHTML = '<p class="vazio">carregando…</p>';
+  d.showModal();
+  try {
+    const t = await api('/api/templates/' + encodeURIComponent(tid));
+    const c = t.contrato;
+    $('#dlg-corpo').innerHTML = `
+      <img src="${esc(t.img)}" alt="">
+      <h3>${esc(t.nome)}</h3>
+      <div class="meta">${t.ano ? t.ano + ' · ' : ''}#${t.rank + 1} em popularidade · ${t.largura}×${t.altura}</div>
+      ${t.descricao ? `<div class="rotulo">História (9GAG)</div><p>${esc(t.descricao)}</p>` : ''}
+      ${c?.funcao ? `<div class="rotulo">Para que serve</div><p>${esc(c.funcao)}</p>` : ''}
+      ${c?.quando_usar?.length ? `<div class="rotulo">Quando usar</div>
+        <div class="tags">${c.quando_usar.map(x => `<span>${esc(x)}</span>`).join('')}</div>` : ''}
+      <div class="rotulo">Caixas de texto</div>
+      <div class="tags">${t.caixas.map(b =>
+        `<span>${esc(b.papel || b.id)}</span>`).join('')}</div>
+      ${!c ? '<p class="meta" style="margin-top:14px">Sem contrato ainda — rode <code>memegen enrich</code>.</p>' : ''}
+      <div style="margin-top:18px;text-align:right">
+        <button class="leve" onclick="document.getElementById('dlg').close()">Fechar</button>
+      </div>`;
+  } catch (e) {
+    $('#dlg-corpo').innerHTML = `<p class="erro">${esc(e.message)}</p>`;
+  }
+}
+$('#dlg').onclick = e => { if (e.target.id === 'dlg') $('#dlg').close(); };
+
+carregarStatus();
+</script>
+</body>
+</html>
