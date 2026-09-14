@@ -83,6 +83,31 @@ def _renderizar(template: dict, textos: dict[str, str]) -> str:
     return f"/render/{nome}"
 
 
+_tamanhos: dict[tuple[str, float], tuple[int, int]] = {}
+
+
+def _tamanho_real(tid: str, t: dict) -> tuple[int, int]:
+    """Dimensão da imagem servida, que não é a declarada no catálogo.
+
+    O 9GAG serve tudo normalizado no canvas de 640 px; `width`/`height` no
+    catálogo são as dimensões do original. Medido: 779 dos 836 divergem. Como é
+    o tamanho servido que sai no meme, é ele que a interface mostra.
+    """
+    caminho = config.TEMPLATE_IMAGES / f"{tid}.jpg"
+    try:
+        chave = (tid, caminho.stat().st_mtime)
+    except OSError:
+        return t["width"], t["height"]
+    if chave not in _tamanhos:
+        try:
+            from PIL import Image
+            with Image.open(caminho) as im:   # lê só o cabeçalho
+                _tamanhos[chave] = im.size
+        except Exception:  # noqa: BLE001
+            return t["width"], t["height"]
+    return _tamanhos[chave]
+
+
 def _resumo(tid: str, t: dict, contracts: dict) -> dict:
     c = contracts.get(tid) or {}
     return {
@@ -92,8 +117,8 @@ def _resumo(tid: str, t: dict, contracts: dict) -> dict:
         "rank": t.get("_rank"),
         "descricao": t.get("description"),
         "keywords": t.get("keywords", []),
-        "largura": t["width"],
-        "altura": t["height"],
+        "largura": _tamanho_real(tid, t)[0],
+        "altura": _tamanho_real(tid, t)[1],
         "caixas": [
             {
                 "id": b["id"],

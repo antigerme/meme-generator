@@ -146,8 +146,11 @@ def render(
     if isinstance(texts, list):
         texts = {b["id"]: t for b, t in zip(boxes, texts)}
 
-    # Uma única escala converte canvas -> pixels. A imagem em disco pode ter sido
-    # reamostrada, então derivamos a escala da largura real e não da declarada.
+    # Uma única escala converte canvas -> pixels, derivada da largura REAL do
+    # arquivo e nunca de template["width"]. O 9GAG serve tudo redimensionado
+    # para o canvas de 640 px, enquanto o catálogo guarda as dimensões do
+    # original: medido, 779 dos 836 divergem (drake diz 1200x1200 e é servido
+    # em 640x640). Usar a largura declarada erraria a escala em quase todos.
     scale = img.width / config.CANVAS_WIDTH
 
     for box in boxes:

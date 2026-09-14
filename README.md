@@ -32,6 +32,11 @@ o limite do contrato. Editar qualquer campo re-renderiza a imagem na hora, sem
 chamar o modelo de novo: texto de meme quase sempre precisa de um retoque, e
 ter que regerar tudo para trocar uma palavra mataria o uso.
 
+**Copiar** põe a imagem na área de transferência, pronta para colar no WhatsApp
+ou no Slack. A conversão para PNG acontece na própria página, a partir da imagem
+já carregada — o clipboard do Chromium recusa JPEG. Onde o navegador não
+permitir, o botão fica desabilitado e explica no título.
+
 Com mais de um resultado aparece **Baixar todos**, que empacota num ZIP nomeado
 pela situação (`memegen-escolher-entre-dormir-cedo-20260914-1804.zip`). O ZIP é
 montado a partir dos campos como estão na tela, não do que o modelo escreveu —
@@ -149,6 +154,17 @@ Com o modelo pequeno, em 30% dos casos o meme certo nunca chega — e aí nenhum
 modelo de geração consegue acertar. São 10 casos, então é sinal forte, não
 prova; vale repetir o benchmark com os contratos reais depois do `enrich`.
 
+### Resolução de saída
+
+Os memes saem com 640 px de largura, que é o teto do que o 9GAG serve — não há
+versão maior disponível (`_large`, `@2x` e afins retornam 404; só existe a de
+640 e uma miniatura de 240).
+
+Vale saber que `width`/`height` no catálogo **não** são as dimensões da imagem
+servida: são as do original. Medido, 779 dos 836 divergem — o Drake diz
+1200×1200 e é servido em 640×640. As imagens já vêm redimensionadas para o
+canvas, o que é mais uma confirmação de que o canvas é de 640 px.
+
 ### Renderização
 
 As coordenadas das caixas não estão em pixels da imagem — estão num canvas de
@@ -242,7 +258,7 @@ modelo escreve e a precisão dos contratos que o `enrich` produz. Rode
 `memegen audit` depois do primeiro enriquecimento.
 
 ```console
-$ python -m pytest tests/ -q          # 46 testes
+$ python -m pytest tests/ -q          # 48 testes
 $ python tools/download_all.py        # todas as imagens (37 MB)
 $ python tools/validate_render.py     # renderiza e mede os 836
 $ python tools/bench_retrieve.py      # qualidade da busca

@@ -223,3 +223,19 @@ def test_zip_vazio_e_recusado(cliente):
 def test_zip_com_template_inexistente(cliente):
     r = _zip_de(cliente, [{"template_id": "nao_existe", "textos": {}}])
     assert r.status_code == 400
+
+
+def test_dimensao_reportada_e_a_servida_nao_a_declarada(cliente):
+    """O catálogo guarda a dimensão do original; o 9GAG serve tudo no canvas de
+    640 px. É o servido que sai no meme, então é o que a interface mostra."""
+    from PIL import Image
+    if not (config.TEMPLATE_IMAGES / f"{TID}.jpg").exists():
+        pytest.skip("imagens não baixadas")
+
+    d = cliente.get(f"/api/templates/{TID}").json()
+    with Image.open(config.TEMPLATE_IMAGES / f"{TID}.jpg") as im:
+        assert (d["largura"], d["altura"]) == im.size
+    assert d["largura"] == 640
+
+    catalogo = json.loads(CATALOG.read_text(encoding="utf-8"))[TID]
+    assert (d["largura"], d["altura"]) != (catalogo["width"], catalogo["height"])

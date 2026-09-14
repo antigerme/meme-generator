@@ -82,7 +82,8 @@ button.leve, a.leve {
   font: inherit; font-size: 13px; line-height: 1.4; cursor: pointer;
   text-decoration: none;
 }
-button.leve:hover, a.leve:hover { border-color: var(--accent); }
+button.leve:hover:not(:disabled), a.leve:hover { border-color: var(--accent); }
+button.leve:disabled { opacity: .55; cursor: default; }
 
 .exemplos { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
 .exemplos button {
@@ -264,6 +265,52 @@ $('#exemplos').onclick = e => {
   if (b) { $('#situacao').value = b.dataset.t; $('#situacao').focus(); }
 };
 
+/* ------------------------------------------------------- copiar imagem */
+
+/** O navegador só aceita PNG no clipboard — JPEG é recusado no Chromium. */
+const podeCopiarImagem =
+  !!(navigator.clipboard && window.ClipboardItem && window.isSecureContext);
+
+function comoPng(img) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return new Promise((ok, falha) =>
+    c.toBlob(b => b ? ok(b) : falha(new Error('conversão falhou')), 'image/png'));
+}
+
+function ligarCopia(card) {
+  const btn = card.querySelector('.copiar');
+  const img = card.querySelector('img');
+  if (!podeCopiarImagem) {
+    btn.title = 'Seu navegador não permite copiar imagem. Use Baixar.';
+    btn.disabled = true;
+    return;
+  }
+
+  btn.onclick = async () => {
+    const rotulo = btn.textContent;
+    try {
+      if (!img.complete) await img.decode();
+      // O blob precisa ser passado como promessa: o Safari exige que o
+      // ClipboardItem seja construído ainda dentro do gesto do usuário.
+      await navigator.clipboard.write([
+        new ClipboardItem({'image/png': comoPng(img)}),
+      ]);
+      btn.textContent = 'Copiado';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = rotulo; btn.disabled = false; }, 1800);
+    } catch (e) {
+      btn.textContent = 'Falhou';
+      setTimeout(() => { btn.textContent = rotulo; }, 1800);
+      $('#erro').textContent =
+        'Não consegui copiar para a área de transferência: ' + e.message + '. Use Baixar.';
+      $('#erro').classList.remove('oculto');
+    }
+  };
+}
+
 /** Re-renderiza com debounce enquanto o texto é editado. */
 function ligarEdicao(card, tid) {
   const img = card.querySelector('img');
@@ -325,13 +372,15 @@ function cartao(s) {
       <div>
         ${campos}
         <div class="linha" style="margin-top:14px">
-          <a class="leve baixar" href="${esc(s.render)}" download style="text-decoration:none">Baixar</a>
+          <button class="leve copiar">Copiar</button>
+          <a class="leve baixar" href="${esc(s.render)}" download>Baixar</a>
           <button class="leve historia" data-id="${esc(s.id)}">História do meme</button>
         </div>
       </div>
     </div>`;
   ligarEdicao(el, s.id);
   el.querySelector('.historia').onclick = () => abrirDetalhe(s.id);
+  ligarCopia(el);
   return el;
 }
 

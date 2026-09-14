@@ -77,3 +77,25 @@ def test_diff_detecta_novos_e_alterados(catalog):
     assert removido in d.added
     assert alterado in d.changed
     assert d.needs_enrichment == d.added + d.changed
+
+
+def test_imagem_servida_vem_no_canvas_de_640(catalog):
+    """As imagens que o 9GAG serve já estão no canvas — por isso a escala de
+    render sai da largura real do arquivo e nunca de template["width"]."""
+    from PIL import Image
+
+    from memegen import config
+
+    medidas = []
+    for tid, t in list(catalog.items())[:40]:
+        p = config.TEMPLATE_IMAGES / f"{tid}.jpg"
+        if p.exists():
+            with Image.open(p) as im:
+                medidas.append((tid, im.size, (t["width"], t["height"])))
+    if not medidas:
+        pytest.skip("imagens não baixadas")
+
+    assert all(real[0] == CANVAS_WIDTH for _, real, _ in medidas), \
+        "alguma imagem servida não tem 640 px de largura"
+    divergentes = [tid for tid, real, decl in medidas if real != decl]
+    assert divergentes, "esperava divergência entre declarado e servido"
