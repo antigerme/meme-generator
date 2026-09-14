@@ -180,7 +180,14 @@ enriquece uma vez e gera alguns memes por dia, a cota gratuita costuma bastar.
 No Gemini o enriquecimento roda **um template por vez**, porque não há API de
 lote. Ele grava depois de cada um: se a cota estourar ou você der `Ctrl + C`, o
 que já foi feito fica salvo e a próxima execução continua de onde parou. Use
-`--pausa` para espaçar as chamadas se bater no limite por minuto.
+`--pausa` para espaçar as chamadas.
+
+Sobre o `403` do Google: ele é ambíguo. Vem tanto para permissão de verdade
+quanto para limite de taxa disfarçado — a diferença está no `reason` dentro do
+corpo, não no código. Por isso a mensagem de erro mostra o corpo completo
+(status, motivo e mensagem), e o cliente repete com espera crescente só quando
+o motivo indica limite de taxa. Permissão de verdade falha na hora, sem
+insistir à toa.
 
 ## Variáveis de ambiente
 
@@ -199,7 +206,7 @@ que já foi feito fica salvo e a próxima execução continua de onde parou. Use
 ## Testes
 
 ```console
-$ python3 -m unittest -v        # 69 testes, também sem dependências
+$ python3 -m unittest -v        # 81 testes, também sem dependências
 ```
 
 Não precisam de rede nem de chave: o catálogo vem de um fixture embutido e as

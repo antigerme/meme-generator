@@ -412,9 +412,54 @@ def chave_gemini():
     return k
 
 
+def _detalhe_gemini(bruto):
+    """Extrai status, motivo e mensagem do corpo de erro do Google.
+
+    O corpo traz mais do que a mensagem: `status` (PERMISSION_DENIED,
+    RESOURCE_EXHAUSTED...) e um `details` com o motivo real. Guardar so a
+    mensagem escondia que um 403 podia ser limite de taxa disfarcado.
+    """
+    try:
+        erro = json.loads(bruto).get("error", {})
+    except ValueError:
+        return bruto[:300], ""
+    partes = []
+    if erro.get("status"):
+        partes.append(erro["status"])
+    if erro.get("message"):
+        partes.append(erro["message"])
+    motivos = []
+    for det in erro.get("details") or []:
+        for chave in ("reason", "@type", "domain"):
+            if det.get(chave):
+                motivos.append(str(det[chave]))
+    if motivos:
+        partes.append("(" + "; ".join(motivos[:3]) + ")")
+    return " ".join(partes) or bruto[:300], erro.get("status", "")
+
+
+def _e_temporario(codigo, detalhe):
+    """Vale a pena repetir? Limite de taxa e falha do servidor, sim.
+
+    O Google devolve 403 tanto para permissao de verdade quanto para limite de
+    taxa, entao o codigo sozinho nao decide -- e preciso olhar o motivo.
+    """
+    if codigo == 429 or codigo >= 500:
+        return True
+    if codigo == 403:
+        alvo = detalhe.lower()
+        return any(p in alvo for p in ("rate", "quota", "exhaust", "limit",
+                                       "too many", "unavailable"))
+    return False
+
+
 def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
-                  timeout=300):
-    """Uma interacao com o Gemini. Devolve (texto, uso)."""
+                  timeout=90, tentativas=4):
+    """Uma interacao com o Gemini. Devolve (texto, uso).
+
+    Timeout curto de proposito: uma chamada presa com timeout longo parece a
+    aplicacao travada. Falhar rapido e repetir e melhor do que esperar.
+    """
     carga = {"model": modelo, "input": blocos}
     if sistema:
         carga["system_instruction"] = sistema
@@ -424,23 +469,31 @@ def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
                                     "schema": schema}
     url = API_GEMINI.rstrip("/") + "/v1beta/interactions"
     cab = {"x-goog-api-key": chave_gemini(), "Content-Type": "application/json"}
-    req = Request(url, data=json.dumps(carga).encode("utf-8"), headers=cab)
-    try:
-        r = urlopen(req, timeout=timeout)
+    corpo = json.dumps(carga).encode("utf-8")
+
+    resposta = None
+    for n in range(tentativas):
         try:
-            resposta = json.loads(r.read().decode("utf-8"))
-        finally:
-            r.close()
-    except HTTPError as e:
-        try:
-            detalhe = e.read().decode("utf-8", "replace")[:500]
-        finally:
-            e.close()
-        try:
-            detalhe = json.loads(detalhe).get("error", {}).get("message", detalhe)
-        except ValueError:
-            pass
-        raise RuntimeError("Gemini respondeu %s: %s" % (e.code, detalhe))
+            r = urlopen(Request(url, data=corpo, headers=cab), timeout=timeout)
+            try:
+                resposta = json.loads(r.read().decode("utf-8"))
+            finally:
+                r.close()
+            break
+        except HTTPError as e:
+            try:
+                bruto = e.read().decode("utf-8", "replace")
+            finally:
+                e.close()
+            detalhe, _ = _detalhe_gemini(bruto)
+            if _e_temporario(e.code, detalhe) and n < tentativas - 1:
+                time.sleep(2 ** n * 3)        # 3s, 6s, 12s
+                continue
+            raise RuntimeError("Gemini respondeu %s: %s" % (e.code, detalhe))
+        except (URLError, socket.error, ssl.SSLError) as e:
+            if n == tentativas - 1:
+                raise RuntimeError("Gemini nao respondeu: %s" % e)
+            time.sleep(2 ** n * 3)
 
     texto = resposta.get("output_text")
     if not texto:
@@ -679,6 +732,18 @@ def enviar_lote(catalogo, ids, modelo=None):
     return lote["id"]
 
 
+def _cota_esgotada(texto):
+    """Cota do dia acabou (parar) ou so limite por minuto (ja foi repetido)?
+
+    O retry em chamar_gemini ja absorve o limite por minuto. Chegar aqui com
+    mensagem de cota significa que repetir nao adiantou.
+    """
+    alvo = texto.lower()
+    diario = ("per day" in alvo or "daily" in alvo or "perday" in alvo
+              or "exhausted" in alvo or "billing" in alvo)
+    return diario and ("quota" in alvo or "resource" in alvo or "limit" in alvo)
+
+
 def enriquecer_sequencial(catalogo, ids, modelo=None, pausa=1.0):
     """Enriquecimento um a um, para provedores sem API de lote.
 
@@ -689,14 +754,26 @@ def enriquecer_sequencial(catalogo, ids, modelo=None, pausa=1.0):
     modelo = modelo or modelo_padrao("enriquecer")
     contratos = ler_json(CONTRATOS, {})
     novos = {}
-    erros = 0
+    erros = []
     total = len(ids)
-    print("%d templates, um a um com %s" % (total, modelo))
+    inicio = time.time()
+    print("%d templates, um a um com %s (pausa de %.1fs)" % (total, modelo, pausa))
+    print("Ctrl+C a qualquer momento: o que ja terminou fica gravado.\n")
 
     for n, tid in enumerate(ids, 1):
+        # imprime ANTES da chamada: enquanto ela demora, a linha na tela ja diz
+        # em que template estamos, em vez de parecer congelado
+        restante = ""
+        if n > 3:
+            por_item = (time.time() - inicio) / (n - 1)
+            faltam = int(por_item * (total - n + 1))
+            restante = "  ~%dmin restantes" % max(1, faltam // 60)
+        sys.stdout.write("  [%d/%d] %s%s\n" % (n, total, tid, restante))
+        sys.stdout.flush()
+
         img = os.path.join(IMAGENS, tid + ".jpg")
         if not os.path.exists(img):
-            erros += 1
+            erros.append((tid, "imagem ausente"))
             continue
         try:
             dados, _ = gerar_json(SISTEMA_ENRIQUECER,
@@ -705,13 +782,14 @@ def enriquecer_sequencial(catalogo, ids, modelo=None, pausa=1.0):
                                   modelo=modelo, max_tokens=2000)
         except RuntimeError as e:
             texto = str(e)
-            if "429" in texto or "quota" in texto.lower() or "rate" in texto.lower():
-                print("  cota atingida em %s (%d/%d). O que ja foi feito esta "
-                      "gravado; rode de novo mais tarde para continuar."
-                      % (tid, n, total))
+            if _cota_esgotada(texto):
+                print("\n  cota diaria esgotada em %s (%d de %d feitos)."
+                      % (tid, n - 1, total))
+                print("  O que ja foi feito esta gravado. Rode de novo quando a "
+                      "cota renovar e ele continua daqui.")
                 break
-            erros += 1
-            print("  %s: %s" % (tid, texto[:120]))
+            erros.append((tid, texto))
+            print("      falhou: %s" % texto[:160])
             continue
 
         dados["source_hash"] = catalogo[tid]["_hash"]
@@ -721,13 +799,16 @@ def enriquecer_sequencial(catalogo, ids, modelo=None, pausa=1.0):
         novos[tid] = dados
         gravar_json(CONTRATOS, contratos)      # grava a cada um: retomavel
 
-        if n % 10 == 0 or n == total:
-            print("  %d/%d" % (n, total))
-            sys.stdout.flush()
         if pausa:
             time.sleep(pausa)
 
-    print("contratos gravados: %d ok, %d com erro" % (len(novos), erros))
+    print("\ncontratos gravados: %d ok, %d com erro" % (len(novos), len(erros)))
+    if erros:
+        print("falharam (rode de novo para tentar so estes):")
+        for tid, motivo in erros[:10]:
+            print("  %s: %s" % (tid, motivo[:120]))
+        if len(erros) > 10:
+            print("  ... e mais %d" % (len(erros) - 10))
     return novos
 
 

@@ -20,7 +20,7 @@ import threading
 import unittest
 import zipfile
 from urllib.request import urlopen, Request
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import importlib.util
 
@@ -888,3 +888,117 @@ class TestEnriquecimentoSequencial(Base):
 
         novos = M.enriquecer_sequencial(self.catalogo, ["drake", "botoes"], pausa=0)
         self.assertEqual(list(novos), ["botoes"])
+
+
+class TestErroGemini(unittest.TestCase):
+    """403 do Google e ambiguo: pode ser permissao de verdade ou limite de taxa
+    disfarcado. So o motivo dentro do corpo decide se vale repetir."""
+
+    def test_detalhe_traz_status_e_motivo(self):
+        corpo = json.dumps({"error": {
+            "code": 403, "status": "PERMISSION_DENIED",
+            "message": "The caller does not have permission",
+            "details": [{"reason": "RATE_LIMIT_EXCEEDED"}]}})
+        detalhe, status = M._detalhe_gemini(corpo)
+        self.assertIn("PERMISSION_DENIED", detalhe)
+        self.assertIn("RATE_LIMIT_EXCEEDED", detalhe)   # o que estava escondido
+        self.assertEqual(status, "PERMISSION_DENIED")
+
+    def test_detalhe_sobrevive_a_corpo_nao_json(self):
+        detalhe, status = M._detalhe_gemini("<html>502 Bad Gateway</html>")
+        self.assertIn("502", detalhe)
+        self.assertEqual(status, "")
+
+    def test_403_por_limite_de_taxa_e_repetivel(self):
+        self.assertTrue(M._e_temporario(403, "PERMISSION_DENIED (RATE_LIMIT_EXCEEDED)"))
+        self.assertTrue(M._e_temporario(403, "Quota exceeded for requests"))
+
+    def test_403_de_permissao_real_nao_e_repetivel(self):
+        self.assertFalse(M._e_temporario(
+            403, "PERMISSION_DENIED API key not valid for this project"))
+
+    def test_429_e_5xx_sao_repetiveis(self):
+        self.assertTrue(M._e_temporario(429, "too many requests"))
+        self.assertTrue(M._e_temporario(503, "service unavailable"))
+
+    def test_400_nao_e_repetivel(self):
+        self.assertFalse(M._e_temporario(400, "invalid schema"))
+
+    def test_cota_diaria_para_o_lote(self):
+        self.assertTrue(M._cota_esgotada(
+            "Gemini respondeu 429: Quota exceeded for quota metric requests per day"))
+        self.assertTrue(M._cota_esgotada("RESOURCE_EXHAUSTED daily limit reached"))
+
+    def test_limite_por_minuto_nao_para_o_lote(self):
+        """O retry ja absorve isso; parar seria desistir cedo demais."""
+        self.assertFalse(M._cota_esgotada(
+            "Gemini respondeu 429: rate limit exceeded, retry in 20s"))
+        self.assertFalse(M._cota_esgotada("Gemini respondeu 400: schema invalido"))
+
+
+class TestRetryGemini(Base):
+
+    def setUp(self):
+        Base.setUp(self)
+        self._antes = dict((k, os.environ.get(k)) for k in
+                           ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MEMEGEN_PROVIDER"))
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["GEMINI_API_KEY"] = "k"
+        os.environ["MEMEGEN_PROVIDER"] = "gemini"
+        self._urlopen, self._sleep = M.urlopen, M.time.sleep
+        M.time.sleep = lambda s: None          # sem espera real nos testes
+
+    def tearDown(self):
+        M.urlopen, M.time.sleep = self._urlopen, self._sleep
+        for k, v in self._antes.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def _falhar_n_vezes(self, n, codigo, corpo):
+        estado = {"n": 0}
+
+        def falso(req, timeout=None):
+            estado["n"] += 1
+            if estado["n"] <= n:
+                raise HTTPError(req.get_full_url(), codigo, "erro", {},
+                                io.BytesIO(corpo.encode()))
+            return RespostaFalsa({"output_text": '{"ids": []}'})
+        M.urlopen = falso
+        return estado
+
+    def test_repete_e_se_recupera_do_403_por_taxa(self):
+        corpo = json.dumps({"error": {"code": 403, "status": "PERMISSION_DENIED",
+                                      "message": "rate limit exceeded"}})
+        estado = self._falhar_n_vezes(2, 403, corpo)
+        M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(estado["n"], 3)       # duas falhas e um sucesso
+
+    def test_nao_repete_permissao_real(self):
+        corpo = json.dumps({"error": {"code": 403, "status": "PERMISSION_DENIED",
+                                      "message": "API key not valid"}})
+        estado = self._falhar_n_vezes(9, 403, corpo)
+        with self.assertRaises(RuntimeError):
+            M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(estado["n"], 1)       # falhou uma vez e desistiu
+
+    def test_desiste_depois_do_limite_de_tentativas(self):
+        corpo = json.dumps({"error": {"code": 429, "message": "rate limit"}})
+        estado = self._falhar_n_vezes(99, 429, corpo)
+        with self.assertRaises(RuntimeError):
+            M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(estado["n"], 4)
+
+    def test_erro_de_rede_tambem_repete(self):
+        estado = {"n": 0}
+
+        def falso(req, timeout=None):
+            estado["n"] += 1
+            if estado["n"] == 1:
+                raise URLError("conexao caiu")
+            return RespostaFalsa({"output_text": "{}"})
+        M.urlopen = falso
+        M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(estado["n"], 2)
