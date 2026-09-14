@@ -158,7 +158,7 @@ def cmd_status(args) -> int:
 
 def cmd_serve(args) -> int:
     from .web import serve
-    serve(host=args.host, port=args.port, reload=args.reload)
+    serve(host=args.host, port=args.port, reload=args.reload, https=args.https)
     return 0
 
 
@@ -234,6 +234,9 @@ def main(argv=None) -> int:
     w.add_argument("--host", default="127.0.0.1")
     w.add_argument("--port", type=int, default=8000)
     w.add_argument("--reload", action="store_true", help="recarrega ao editar o código")
+    w.add_argument("--https", action="store_true",
+                   help="serve em HTTPS com certificado autoassinado; necessário "
+                        "para copiar e compartilhar fora de localhost (ex.: do celular)")
     w.set_defaults(func=cmd_serve)
 
     i = sub.add_parser("index", help="(re)constrói o índice de busca vetorial")

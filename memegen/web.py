@@ -341,9 +341,27 @@ def imagem_render(nome: str) -> FileResponse:
     return FileResponse(caminho, media_type="image/jpeg")
 
 
-def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
+def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False,
+          https: bool = False) -> None:
     import uvicorn
+
     config.ensure_dirs()
-    print(f"memegen em http://{host}:{port}")
+    ssl = {}
+    esquema = "http"
+    if https:
+        from . import tls
+        cert, chave = tls.gerar()
+        ssl = {"ssl_certfile": str(cert), "ssl_keyfile": str(chave)}
+        esquema = "https"
+
+    print(f"memegen em {esquema}://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}")
+    if host == "0.0.0.0":
+        from . import tls
+        for ip in tls.ips_locais():
+            if ip != "127.0.0.1":
+                print(f"  na rede: {esquema}://{ip}:{port}")
+        if not https:
+            print("  aviso: sem --https, copiar e compartilhar não funcionam fora de")
+            print("         localhost — o navegador exige contexto seguro.")
     uvicorn.run("memegen.web:app" if reload else app, host=host, port=port,
-                reload=reload, log_level="warning")
+                reload=reload, log_level="warning", **ssl)

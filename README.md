@@ -32,6 +32,13 @@ o limite do contrato. Editar qualquer campo re-renderiza a imagem na hora, sem
 chamar o modelo de novo: texto de meme quase sempre precisa de um retoque, e
 ter que regerar tudo para trocar uma palavra mataria o uso.
 
+**Compartilhar** abre a folha de compartilhamento do sistema com o PNG em
+anexo, e é de lá que sai o WhatsApp. Não existe URL do WhatsApp que carregue
+imagem — `wa.me` aceita só `?text=` —, então a Web Share API com arquivo é o
+único caminho real. Ela exige contexto seguro e um sistema com folha de
+compartilhamento: funciona em Android, iOS, Windows e macOS, e não existe em
+Linux desktop nem no Firefox, onde o botão fica desabilitado explicando por quê.
+
 **Copiar** põe a imagem na área de transferência, pronta para colar no WhatsApp
 ou no Slack. A conversão para PNG acontece na própria página, a partir da imagem
 já carregada — o clipboard do Chromium recusa JPEG. Onde o navegador não
@@ -47,8 +54,25 @@ contrato, então "dilema" encontra o Two Buttons — coisa que a busca do própr
 9GAG, que é `includes()` sobre nome e keywords, não faz. Clicar num template
 abre a história do meme, para que serve, quando usar e o papel de cada caixa.
 
-O servidor escuta em localhost e não tem autenticação. É ferramenta pessoal,
-não serviço — não exponha para fora da máquina.
+### Usando do celular
+
+Copiar e compartilhar exigem contexto seguro. `localhost` conta; `http://192.168.0.10:8000`
+não — e é assim que o celular alcança sua máquina. Sem HTTPS os dois botões
+ficam mortos justamente no aparelho onde o WhatsApp está.
+
+```console
+$ memegen serve --host 0.0.0.0 --https
+memegen em https://localhost:8000
+  na rede: https://192.168.0.10:8000
+```
+
+O certificado autoassinado é gerado na primeira vez (via `openssl`, sem
+dependência nova) e cobre `localhost` mais os IPs de rede detectados — assim o
+celular avisa só que o certificado é autoassinado, e não também que o nome
+diverge. É aceitar uma vez por aparelho.
+
+O servidor não tem autenticação. Com `--host 0.0.0.0` ele fica visível para
+toda a rede local: use em rede de casa, não em wi-fi público.
 
 ## Como funciona
 
@@ -258,7 +282,7 @@ modelo escreve e a precisão dos contratos que o `enrich` produz. Rode
 `memegen audit` depois do primeiro enriquecimento.
 
 ```console
-$ python -m pytest tests/ -q          # 48 testes
+$ python -m pytest tests/ -q          # 54 testes
 $ python tools/download_all.py        # todas as imagens (37 MB)
 $ python tools/validate_render.py     # renderiza e mede os 836
 $ python tools/bench_retrieve.py      # qualidade da busca

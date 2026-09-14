@@ -311,6 +311,54 @@ function ligarCopia(card) {
   };
 }
 
+/* -------------------------------------------------- compartilhar imagem */
+
+/* Não existe URL do WhatsApp que carregue imagem — wa.me aceita só ?text=.
+   O único caminho é a Web Share API com arquivo, que abre a folha de
+   compartilhamento do sistema, onde o WhatsApp aparece junto com o resto.
+   Exige contexto seguro: em localhost funciona, mas acessando do celular pelo
+   IP da rede é preciso subir com `memegen serve --host 0.0.0.0 --https`. */
+const podeCompartilhar = !!(navigator.share && navigator.canShare);
+
+function nomeArquivo(card) {
+  const titulo = card.querySelector('h3').textContent;
+  const slug = titulo.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+  return `${slug || 'meme'}.png`;
+}
+
+function ligarCompartilhar(card) {
+  const btn = card.querySelector('.compartilhar');
+  const img = card.querySelector('img');
+  if (!podeCompartilhar) {
+    btn.title = window.isSecureContext
+      ? 'Seu navegador não tem compartilhamento de arquivo. Use Copiar ou Baixar.'
+      : 'Compartilhar exige HTTPS. Suba com: memegen serve --host 0.0.0.0 --https';
+    btn.disabled = true;
+    return;
+  }
+
+  btn.onclick = async () => {
+    const rotulo = btn.textContent;
+    try {
+      if (!img.complete) await img.decode();
+      const png = await comoPng(img);
+      const arquivo = new File([png], nomeArquivo(card), {type: 'image/png'});
+      if (!navigator.canShare({files: [arquivo]})) {
+        throw new Error('este navegador não compartilha imagem');
+      }
+      await navigator.share({files: [arquivo]});
+    } catch (e) {
+      if (e.name === 'AbortError') return;   // o usuário fechou a folha
+      btn.textContent = 'Falhou';
+      setTimeout(() => { btn.textContent = rotulo; }, 1800);
+      $('#erro').textContent = 'Não consegui compartilhar: ' + e.message +
+        '. Use Copiar e cole no WhatsApp.';
+      $('#erro').classList.remove('oculto');
+    }
+  };
+}
+
 /** Re-renderiza com debounce enquanto o texto é editado. */
 function ligarEdicao(card, tid) {
   const img = card.querySelector('img');
@@ -372,6 +420,7 @@ function cartao(s) {
       <div>
         ${campos}
         <div class="linha" style="margin-top:14px">
+          <button class="leve compartilhar">Compartilhar</button>
           <button class="leve copiar">Copiar</button>
           <a class="leve baixar" href="${esc(s.render)}" download>Baixar</a>
           <button class="leve historia" data-id="${esc(s.id)}">História do meme</button>
@@ -381,6 +430,7 @@ function cartao(s) {
   ligarEdicao(el, s.id);
   el.querySelector('.historia').onclick = () => abrirDetalhe(s.id);
   ligarCopia(el);
+  ligarCompartilhar(el);
   return el;
 }
 
