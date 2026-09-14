@@ -1,14 +1,6 @@
 __pycache__/
 *.py[cod]
-.venv/
-venv/
-.env
 
-# Dados sincronizados do 9GAG e artefatos derivados. Nada aqui é versionado:
-# o catálogo é espelho de conteúdo de terceiros e se reconstrói com
-# `memegen sync` + `memegen enrich` + `memegen index`.
-data/
-out/
-
-# Fontes baixadas (licença própria — ver fonts/README.md)
-fonts/*.ttf
+# Catalogo espelhado do 9GAG e artefatos derivados. Nada aqui e versionado:
+# reconstroi com `memegen.py sync` + `memegen.py enrich`.
+dados/
