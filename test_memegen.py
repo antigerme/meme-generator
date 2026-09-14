@@ -481,6 +481,7 @@ class TestServidor(Base):
                 codigo = self.get(rota)[0]
             except HTTPError as e:
                 codigo = e.code
+                e.close()
             self.assertIn(codigo, (400, 404), rota)
 
     def test_rota_desconhecida(self):
@@ -488,6 +489,7 @@ class TestServidor(Base):
             codigo = self.get("/nao/existe")[0]
         except HTTPError as e:
             codigo = e.code
+            e.close()
         self.assertEqual(codigo, 404)
 
     def test_zip_empacota_o_que_o_navegador_desenhou(self):
@@ -514,6 +516,7 @@ class TestServidor(Base):
             codigo = self.post("/api/zip", {"itens": []})[0]
         except HTTPError as e:
             codigo = e.code
+            e.close()
         self.assertEqual(codigo, 400)
 
     def test_suggest_exige_situacao(self):
@@ -521,6 +524,7 @@ class TestServidor(Base):
             codigo = self.post("/api/suggest", {"situacao": "   "})[0]
         except HTTPError as e:
             codigo = e.code
+            e.close()
         self.assertEqual(codigo, 400)
 
     def test_estado_releva_arquivo_alterado(self):

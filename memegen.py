@@ -336,7 +336,12 @@ def chamar_api(caminho, carga=None, metodo=None, timeout=300):
         finally:
             r.close()
     except HTTPError as e:
-        detalhe = e.read().decode("utf-8", "replace")[:500]
+        # o HTTPError tambem e um arquivo: sem fechar, o 3.14 emite
+        # ResourceWarning quando o coletor o recolhe
+        try:
+            detalhe = e.read().decode("utf-8", "replace")[:500]
+        finally:
+            e.close()
         try:
             detalhe = json.loads(detalhe).get("error", {}).get("message", detalhe)
         except ValueError:
