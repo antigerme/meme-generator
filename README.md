@@ -182,11 +182,6 @@ lote. Ele grava depois de cada um: se a cota estourar ou você der `Ctrl + C`, o
 que já foi feito fica salvo e a próxima execução continua de onde parou. Use
 `--pausa` para espaçar as chamadas.
 
-A cota gratuita do Gemini é **por modelo e por dia** (500 requisições/dia por
-modelo, no momento em que isto foi escrito). Como a triagem e a geração usam
-modelos diferentes, esgotar a de um não impede o outro: se a triagem esbarrar na
-cota, o `suggest` cai sozinho para o catálogo inteiro e avisa, em vez de falhar.
-
 Sobre o `403` do Google: ele é ambíguo. Vem tanto para permissão de verdade
 quanto para limite de taxa disfarçado — a diferença está no `reason` dentro do
 corpo, não no código. Por isso a mensagem de erro mostra o corpo completo
@@ -211,7 +206,7 @@ insistir à toa.
 ## Testes
 
 ```console
-$ python3 -m unittest -v        # 84 testes, também sem dependências
+$ python3 -m unittest -v        # 81 testes, também sem dependências
 ```
 
 Não precisam de rede nem de chave: o catálogo vem de um fixture embutido e as
