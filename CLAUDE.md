@@ -60,10 +60,14 @@ dependência proibida na reescrita. Hoje a triagem é por LLM.
 ## Estado em 15/09/2026
 
 - Catálogo: 836 templates sincronizados
-- Contratos: **494 de 836**. Os 342 restantes esperam a cota do Gemini renovar
+- Contratos: **~546 de 836**. Rodar `enrich` de novo para continuar (confirme
+  com `status`)
 - Provedor em uso: Gemini (cota gratuita). A API da Anthropic é pré-paga, sem
   tier gratuito, e a conta dele não tem crédito
-- Cota gratuita do Gemini: **500 requisições/dia, por modelo**
+- Cota gratuita do Gemini, medida no painel do AI Studio:
+  - `gemini-3.5-flash-lite` (enriquecimento e triagem): 500/dia, 15/min
+  - `gemini-3.8-flash` (geração): **20/dia**, 5/min — aperta na hora de avaliar
+    a qualidade dos memes
 
 Validado rodando de verdade no Fedora 44 com Python 3.14.7: os 81 testes, o
 `sync`, o enriquecimento via Gemini, a qualidade dos contratos (conferida no

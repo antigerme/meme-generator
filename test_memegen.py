@@ -1002,3 +1002,95 @@ class TestRetryGemini(Base):
         M.urlopen = falso
         M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
         self.assertEqual(estado["n"], 2)
+
+
+class TestCorpoDeErroMalformado(unittest.TestCase):
+    """O tratador de erro nunca pode ser quem levanta a excecao.
+
+    Um 503 do Gemini veio com o corpo embrulhado num array; o parser assumia
+    dicionario, estourou AttributeError dentro do except e matou um lote de
+    342 templates no item 53 -- sendo que 503 e temporario e o retry teria
+    absorvido.
+    """
+
+    def _nao_levanta(self, corpo):
+        detalhe, status = M._detalhe_gemini(corpo)
+        self.assertIsInstance(detalhe, str)
+        self.assertIsInstance(status, str)
+        return detalhe, status
+
+    def test_erro_embrulhado_em_lista(self):
+        corpo = json.dumps([{"error": {"code": 503, "status": "UNAVAILABLE",
+                                       "message": "Service Unavailable"}}])
+        detalhe, status = self._nao_levanta(corpo)
+        self.assertIn("UNAVAILABLE", detalhe)
+        self.assertIn("Service Unavailable", detalhe)
+        self.assertEqual(status, "UNAVAILABLE")
+
+    def test_campos_na_raiz_sem_chave_error(self):
+        detalhe, status = self._nao_levanta(
+            json.dumps({"status": "UNAVAILABLE", "message": "sobrecarga"}))
+        self.assertIn("sobrecarga", detalhe)
+        self.assertEqual(status, "UNAVAILABLE")
+
+    def test_formas_que_nao_sao_objeto(self):
+        for corpo in ("[]", "42", "null", '"texto"', "", "   ",
+                      "<html>503 Bad Gateway</html>"):
+            self._nao_levanta(corpo)
+
+    def test_details_com_tipo_errado(self):
+        for detalhes in ('"oops"', "123", "null", '[1, 2]'):
+            corpo = '{"error": {"message": "x", "details": %s}}' % detalhes
+            detalhe, _ = self._nao_levanta(corpo)
+            self.assertIn("x", detalhe)
+
+    def test_campos_com_tipo_errado(self):
+        detalhe, status = self._nao_levanta(
+            json.dumps({"error": {"status": 500, "message": ["a", "b"]}}))
+        self.assertEqual(status, "")          # numero nao vira status
+
+    def test_erro_de_503_continua_repetivel(self):
+        """Depois de parseado, o 503 precisa cair no caminho de retry."""
+        corpo = json.dumps([{"error": {"status": "UNAVAILABLE",
+                                       "message": "Service Unavailable"}}])
+        detalhe, _ = M._detalhe_gemini(corpo)
+        self.assertTrue(M._e_temporario(503, detalhe))
+
+    def test_503_nao_e_confundido_com_cota_diaria(self):
+        corpo = json.dumps([{"error": {"status": "UNAVAILABLE",
+                                       "message": "Service Unavailable"}}])
+        detalhe, _ = M._detalhe_gemini(corpo)
+        self.assertFalse(M._cota_esgotada(detalhe))
+
+
+class TestLoteSobreviveAImprevisto(Base):
+    """Um template com problema nao pode levar os outros 341 junto."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._gerar = M.gerar_json
+        M.gravar_json(M.CONTRATOS, {})
+
+    def tearDown(self):
+        M.gerar_json = self._gerar
+        Base.tearDown(self)
+
+    def test_excecao_inesperada_nao_derruba_o_lote(self):
+        def falso(sistema, texto, schema, papel, imagem=None, modelo=None,
+                  max_tokens=4000, cachear_sistema=False):
+            if "Drake" in texto:
+                raise AttributeError("'list' object has no attribute 'get'")
+            return ({"funcao": "f", "quando_usar": ["q"], "tom": ["t"],
+                     "slots": [{"box_id": b["id"], "papel": "p", "exemplo": "e",
+                                "max_chars": 40}
+                               for b in self.catalogo["botoes"]["textBoxes"]],
+                     "nsfw": False}, {"input": 1, "output": 1})
+        M.gerar_json = falso
+
+        novos = M.enriquecer_sequencial(self.catalogo, ["drake", "botoes"], pausa=0)
+        self.assertEqual(list(novos), ["botoes"])         # o seguinte foi em frente
+        self.assertEqual(list(M.ler_json(M.CONTRATOS, {})), ["botoes"])
+        # e o que falhou continua pendente, para a proxima execucao pegar
+        self.assertEqual(M.contratos_pendentes(self.catalogo,
+                                               M.ler_json(M.CONTRATOS, {})),
+                         ["drake"])

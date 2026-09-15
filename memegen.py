@@ -419,23 +419,45 @@ def _detalhe_gemini(bruto):
     RESOURCE_EXHAUSTED...) e um `details` com o motivo real. Guardar so a
     mensagem escondia que um 403 podia ser limite de taxa disfarcado.
     """
+    resumo = (bruto or "").strip()[:300]
     try:
-        erro = json.loads(bruto).get("error", {})
+        corpo = json.loads(bruto)
     except ValueError:
-        return bruto[:300], ""
+        return resumo, ""
+
+    # O Google as vezes embrulha o erro num array em vez de devolver o objeto
+    # direto. Foi assim que um 503 -- que o retry teria absorvido -- derrubou
+    # um lote inteiro: o parser assumia dicionario e estourou AttributeError
+    # dentro do proprio tratador de erro.
+    if isinstance(corpo, list):
+        corpo = next((x for x in corpo if isinstance(x, dict)), None)
+    if not isinstance(corpo, dict):
+        return resumo, ""
+
+    erro = corpo.get("error")
+    if not isinstance(erro, dict):
+        erro = corpo                      # alguns corpos trazem os campos na raiz
+
     partes = []
-    if erro.get("status"):
-        partes.append(erro["status"])
-    if erro.get("message"):
-        partes.append(erro["message"])
+    for chave in ("status", "message"):
+        valor = erro.get(chave)
+        if isinstance(valor, str) and valor:
+            partes.append(valor)
+
     motivos = []
-    for det in erro.get("details") or []:
-        for chave in ("reason", "@type", "domain"):
-            if det.get(chave):
-                motivos.append(str(det[chave]))
+    detalhes = erro.get("details")
+    if isinstance(detalhes, list):
+        for det in detalhes:
+            if not isinstance(det, dict):
+                continue
+            for chave in ("reason", "@type", "domain"):
+                if det.get(chave):
+                    motivos.append(str(det[chave]))
     if motivos:
         partes.append("(" + "; ".join(motivos[:3]) + ")")
-    return " ".join(partes) or bruto[:300], erro.get("status", "")
+
+    status = erro.get("status")
+    return " ".join(partes) or resumo, status if isinstance(status, str) else ""
 
 
 def _e_temporario(codigo, detalhe):
@@ -780,8 +802,8 @@ def enriquecer_sequencial(catalogo, ids, modelo=None, pausa=1.0):
                                   prompt_enriquecimento(catalogo[tid]),
                                   ESQUEMA_CONTRATO, "enriquecer", imagem=img,
                                   modelo=modelo, max_tokens=2000)
-        except RuntimeError as e:
-            texto = str(e)
+        except Exception as e:      # noqa: BLE001 - um template nao derruba o lote
+            texto = "%s: %s" % (type(e).__name__, e) if not isinstance(e, RuntimeError) else str(e)
             if _cota_esgotada(texto):
                 print("\n  cota diaria esgotada em %s (%d de %d feitos)."
                       % (tid, n - 1, total))
