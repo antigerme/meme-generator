@@ -61,6 +61,7 @@ IMAGENS = os.path.join(DADOS, "templates")
 CATALOGO = os.path.join(DADOS, "catalogo.json")
 CONTRATOS = os.path.join(DADOS, "contratos.json")
 ESTADO = os.path.join(DADOS, "estado.json")
+TRAVA = os.path.join(DADOS, "enrich.lock")
 CERT = os.path.join(DADOS, "cert.pem")
 CHAVE = os.path.join(DADOS, "key.pem")
 
@@ -608,6 +609,64 @@ def gerar_json(sistema, texto, schema, papel, imagem=None, modelo=None,
         return json.loads(bruto), uso
     except ValueError:
         raise RuntimeError("o modelo nao devolveu JSON valido: %s" % bruto[:300])
+
+
+# ------------------------------------------------------------------- trava
+
+# Dois enriquecimentos ao mesmo tempo leem e escrevem contratos.json em
+# paralelo. A gravacao e atomica, entao o arquivo nao corrompe, mas um processo
+# sobrescreve o que o outro acabou de gravar -- e os dois gastam cota com os
+# mesmos templates. Aconteceu de verdade: duas execucoes concorrentes queimaram
+# a cota do dia em duplicata.
+
+
+def _processo_vivo(pid):
+    try:
+        os.kill(pid, 0)                 # sinal 0 so testa a existencia
+    except OSError:
+        return False
+    except AttributeError:              # pragma: no cover - Windows sem os.kill
+        return True
+    return True
+
+
+class Trava(object):
+    """Impede dois enriquecimentos simultaneos. Libera trava orfa sozinha."""
+
+    def __enter__(self):
+        garantir_dirs()
+        try:
+            fd = os.open(TRAVA, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except OSError:
+            dono = None
+            try:
+                with open(TRAVA) as f:
+                    dono = int((f.read().split() or ["0"])[0])
+            except (OSError, ValueError):
+                pass
+            if dono and _processo_vivo(dono):
+                raise RuntimeError(
+                    "ja existe um enriquecimento rodando (pid %d).\n"
+                    "Rodar dois ao mesmo tempo gasta cota em duplicata e um "
+                    "sobrescreve os contratos do outro.\n"
+                    "Acompanhe o que esta rodando, ou encerre com: kill %d"
+                    % (dono, dono))
+            # o dono morreu sem limpar: a trava e orfa
+            try:
+                os.unlink(TRAVA)
+            except OSError:
+                pass
+            fd = os.open(TRAVA, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write("%d %s\n" % (os.getpid(), agora()))
+        return self
+
+    def __exit__(self, *args):
+        try:
+            os.unlink(TRAVA)
+        except OSError:
+            pass
+        return False
 
 
 # ------------------------------------------------------------- enriquecimento
@@ -2160,18 +2219,20 @@ def cmd_enrich(args):
             print(prompt_enriquecimento(catalogo[pendentes[0]]))
         return 0
 
-    if qual == "gemini":
-        # sem API de lote: sequencial, com pausa entre chamadas para caber na
-        # cota gratuita, e gravando a cada template para poder retomar
-        enriquecer_sequencial(catalogo, pendentes, args.model, pausa=args.pausa)
-        return 0
+    with Trava():
+        if qual == "gemini":
+            # sem API de lote: sequencial, com pausa entre chamadas para caber
+            # na cota gratuita, e gravando a cada template para poder retomar
+            enriquecer_sequencial(catalogo, pendentes, args.model,
+                                  pausa=args.pausa)
+            return 0
 
-    lote = enviar_lote(catalogo, pendentes, args.model)
-    if args.wait:
-        coletar_lote(lote, catalogo)
-    else:
-        print("\nacompanhe com: %s enrich --collect %s"
-              % (os.path.basename(sys.argv[0]), lote))
+        lote = enviar_lote(catalogo, pendentes, args.model)
+        if args.wait:
+            coletar_lote(lote, catalogo)
+        else:
+            print("\nacompanhe com: %s enrich --collect %s"
+                  % (os.path.basename(sys.argv[0]), lote))
     return 0
 
 

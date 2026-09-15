@@ -177,6 +177,10 @@ enriquece uma vez e gera alguns memes por dia, a cota gratuita costuma bastar.
 | Padrão enriquecer | `claude-sonnet-5` | `gemini-3.5-flash-lite` |
 | Padrão gerar | `claude-opus-5` | `gemini-3.8-flash` |
 
+Só um enriquecimento roda por vez: uma trava em `dados/enrich.lock` recusa a
+segunda execução. Dois em paralelo gastam cota em duplicata e um sobrescreve os
+contratos do outro. Trava de processo morto é liberada sozinha.
+
 No Gemini o enriquecimento roda **um template por vez**, porque não há API de
 lote. Ele grava depois de cada um: se a cota estourar ou você der `Ctrl + C`, o
 que já foi feito fica salvo e a próxima execução continua de onde parou. Use
@@ -206,7 +210,7 @@ insistir à toa.
 ## Testes
 
 ```console
-$ python3 -m unittest -v        # 89 testes, também sem dependências
+$ python3 -m unittest -v        # 96 testes, também sem dependências
 ```
 
 Não precisam de rede nem de chave: o catálogo vem de um fixture embutido e as

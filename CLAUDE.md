@@ -60,8 +60,8 @@ dependência proibida na reescrita. Hoje a triagem é por LLM.
 ## Estado em 15/09/2026
 
 - Catálogo: 836 templates sincronizados
-- Contratos: **~546 de 836**. Rodar `enrich` de novo para continuar (confirme
-  com `status`)
+- Contratos: rodar `status` para saber. Continuar com `enrich` até dar
+  `0 pendentes`
 - Provedor em uso: Gemini (cota gratuita). A API da Anthropic é pré-paga, sem
   tier gratuito, e a conta dele não tem crédito
 - Cota gratuita do Gemini, medida no painel do AI Studio:

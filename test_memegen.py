@@ -1094,3 +1094,64 @@ class TestLoteSobreviveAImprevisto(Base):
         self.assertEqual(M.contratos_pendentes(self.catalogo,
                                                M.ler_json(M.CONTRATOS, {})),
                          ["drake"])
+
+
+class TestTrava(Base):
+    """Dois enriquecimentos ao mesmo tempo gastam cota em duplicata e um
+    sobrescreve os contratos do outro. Aconteceu de verdade."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._trava = M.TRAVA
+        M.TRAVA = os.path.join(self.tmp, "enrich.lock")
+
+    def tearDown(self):
+        M.TRAVA = self._trava
+        Base.tearDown(self)
+
+    def test_cria_e_remove(self):
+        with M.Trava():
+            self.assertTrue(os.path.exists(M.TRAVA))
+        self.assertFalse(os.path.exists(M.TRAVA))
+
+    def test_guarda_o_pid_de_quem_travou(self):
+        with M.Trava():
+            with open(M.TRAVA) as f:
+                self.assertEqual(int(f.read().split()[0]), os.getpid())
+
+    def test_segunda_entrada_e_recusada(self):
+        with M.Trava():
+            with self.assertRaises(RuntimeError) as ctx:
+                with M.Trava():
+                    pass
+            texto = str(ctx.exception)
+            self.assertIn("ja existe um enriquecimento rodando", texto)
+            self.assertIn("kill", texto)        # diz como encerrar
+
+    def test_trava_orfa_e_liberada(self):
+        """Processo morto sem limpar nao pode bloquear para sempre."""
+        with open(M.TRAVA, "w") as f:
+            f.write("999999 2026-01-01T00:00:00+00:00\n")   # pid inexistente
+        with M.Trava():
+            with open(M.TRAVA) as f:
+                self.assertEqual(int(f.read().split()[0]), os.getpid())
+        self.assertFalse(os.path.exists(M.TRAVA))
+
+    def test_trava_ilegivel_e_liberada(self):
+        with open(M.TRAVA, "w") as f:
+            f.write("lixo\n")
+        with M.Trava():
+            pass
+        self.assertFalse(os.path.exists(M.TRAVA))
+
+    def test_libera_mesmo_com_excecao(self):
+        try:
+            with M.Trava():
+                raise ValueError("estourou no meio")
+        except ValueError:
+            pass
+        self.assertFalse(os.path.exists(M.TRAVA))
+
+    def test_processo_vivo_reconhece_a_si_mesmo(self):
+        self.assertTrue(M._processo_vivo(os.getpid()))
+        self.assertFalse(M._processo_vivo(999999))
