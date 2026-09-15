@@ -999,8 +999,21 @@ def sugerir(situacao, catalogo, contratos, n=3, modelo=None, modo="shortlist",
         raise RuntimeError("nenhum contrato encontrado - rode `enrich` antes de gerar")
 
     uso_triagem = None
+    aviso = None
     if modo == "shortlist":
-        ids, uso_triagem = triar(situacao, catalogo, contratos, k, nsfw=nsfw)
+        try:
+            ids, uso_triagem = triar(situacao, catalogo, contratos, k, nsfw=nsfw)
+        except RuntimeError as e:
+            # A cota do Gemini e por modelo e por dia. Gastar a do modelo de
+            # triagem nao deveria derrubar a geracao, que usa outro modelo com
+            # cota propria: cai para o catalogo inteiro em vez de falhar.
+            if not _cota_esgotada(str(e)) and "429" not in str(e):
+                raise
+            aviso = ("a triagem esbarrou na cota (%s); usei o catalogo inteiro"
+                     % str(e).split(":", 1)[-1].strip()[:90])
+            print("aviso: " + aviso)
+            modo = "full"
+            ids = []
         if ids:
             contratos = dict((i, contratos[i]) for i in ids if i in contratos)
             catalogo = dict((i, catalogo[i]) for i in ids if i in catalogo)
@@ -1015,6 +1028,7 @@ def sugerir(situacao, catalogo, contratos, n=3, modelo=None, modo="shortlist",
     uso["candidatos"] = len(contratos)
     uso["modo"] = modo
     uso["provedor"] = provedor()
+    uso["aviso"] = aviso
     return sugestoes, uso
 
 
@@ -1534,6 +1548,7 @@ $('#gerar').onclick = async () => {
       $('#barra').classList.remove('oculto');
     }
     const u = r.uso || {}, t = u.triagem;
+    if (u.aviso) mostrarErro(u.aviso);
     $('#uso').textContent = 'modo ' + u.modo + ' / ' + u.candidatos + ' candidatos / ' +
       (t ? 'triagem ' + t.input + '+' + t.output + ' tok / ' : '') +
       'geracao ' + u.input + '+' + u.output + ' tok';
