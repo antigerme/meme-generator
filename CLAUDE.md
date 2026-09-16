@@ -51,6 +51,18 @@ o 9GAG serve tudo já redimensionado para o canvas. Medido: 779 dos 836 divergem
 sequência é mulher-de-vermelho, namorado, namorada. Só 40 dos 836 têm a
 descrição do 9GAG explicando os papéis. É a razão de existir o enriquecimento.
 
+**Gemini 3.x raciocina por padrão.** `thinking_level` vem em `medium` e
+`max_output_tokens` limita pensamento + saída **somados**. Sem enviar os dois, a
+triagem sobre 836 templates estourava quatro timeouts de 90 s. Com
+`thinking_level: low` ela roda em 3,7 s e o `total_thought_tokens` volta zero —
+confirmado no debug, então o `generation_config` é mesmo aceito.
+
+**As mensagens de cota do Google são ambíguas.** `RESOURCE_EXHAUSTED` serve para
+limite por minuto e para cota diária, e a de cota diária também diz "Please
+retry in 20.8s" e "check your plan and billing details". Não tente classificar
+pela mensagem — já tentei e o teste derrubou. Por isso o 429 insiste só uma vez
+(`TENTATIVAS_429`), enquanto o 5xx usa as quatro.
+
 **A busca vetorial foi testada e descartada.** Indexar a descrição do 9GAG casa
 por assunto de superfície, não por função ("dormir cedo ou terminar a série"
 trazia Alarm Clock em vez de Two Buttons). Com contratos bons e
@@ -79,10 +91,11 @@ três papéis) e a retomada após interrupção, crash e cota esgotada.
 1. **O usuário nunca viu um meme gerado.** É o passo 6, o único que falta, e a
    pergunta que decide o projeto: o texto tem graça? LLM escreve legenda de
    meme sem graça por padrão. Atenção à cota: só 20 gerações por dia.
-2. **Gemini 3.x raciocina por padrão.** `thinking_level` vem em `medium` e
-   `max_output_tokens` limita pensamento + saída somados. Sem enviar os dois, a
-   triagem sobre 836 templates estourava quatro timeouts de 90s. Corrigido —
-   mas se algo voltar a ficar lento, é o primeiro lugar para olhar.
+2. **Só falta a geração rodar.** A triagem foi confirmada funcionando em
+   16/09: 3,7 s para peneirar os 836 (108 mil caracteres) e devolver 26
+   candidatos sensatos. A geração parou em 429 — a cota de 20/dia do
+   `gemini-3.8-flash` já tinha acabado. Não há bug conhecido nesse caminho,
+   só falta cota.
 3. **Bug no modo `full`:** `400: Request contains an invalid argument` no
    Gemini. O enriquecimento fez 494 chamadas sem um 400, então é específico
    desse modo — suspeita de tamanho (manda ~220 KB de contratos no
