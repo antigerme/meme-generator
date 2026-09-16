@@ -57,11 +57,11 @@ trazia Alarm Clock em vez de Two Buttons). Com contratos bons e
 `multilingual-e5-large` chegava a top-30 10/10, mas o modelo tem 2,2 GB e virou
 dependência proibida na reescrita. Hoje a triagem é por LLM.
 
-## Estado em 15/09/2026
+## Estado em 16/09/2026
 
 - Catálogo: 836 templates sincronizados
-- Contratos: rodar `status` para saber. Continuar com `enrich` até dar
-  `0 pendentes`
+- Contratos: **836 de 836, completo.** O enriquecimento acabou — só volta a
+  rodar quando o 9GAG publicar templates novos (o `sync` detecta)
 - Provedor em uso: Gemini (cota gratuita). A API da Anthropic é pré-paga, sem
   tier gratuito, e a conta dele não tem crédito
 - Cota gratuita do Gemini, medida no painel do AI Studio:
@@ -69,23 +69,22 @@ dependência proibida na reescrita. Hoje a triagem é por LLM.
   - `gemini-3.8-flash` (geração): **20/dia**, 5/min — aperta na hora de avaliar
     a qualidade dos memes
 
-Validado rodando de verdade no Fedora 44 com Python 3.14.7: os 81 testes, o
-`sync`, o enriquecimento via Gemini, a qualidade dos contratos (conferida no
-`distracted_boyfriend`, o caso mais difícil — o modelo acertou os três papéis) e
-a retomada após interrupção.
+Validado rodando de verdade no Fedora 44 com Python 3.14.7: os 96 testes, o
+`sync`, o enriquecimento completo dos 836 via Gemini, a qualidade dos contratos
+(conferida no `distracted_boyfriend`, o caso mais difícil — o modelo acertou os
+três papéis) e a retomada após interrupção, crash e cota esgotada.
 
 ## Em aberto
 
-1. **O usuário nunca viu um meme gerado.** É o próximo passo e a pergunta que
-   decide o projeto: o texto tem graça? LLM escreve legenda de meme sem graça
-   por padrão.
+1. **O usuário nunca viu um meme gerado.** É o passo 6, o único que falta, e a
+   pergunta que decide o projeto: o texto tem graça? LLM escreve legenda de
+   meme sem graça por padrão. Atenção à cota: só 20 gerações por dia.
 2. **Bug no modo `full`:** `400: Request contains an invalid argument` no
    Gemini. O enriquecimento fez 494 chamadas sem um 400, então é específico
    desse modo — suspeita de tamanho (manda ~220 KB de contratos no
    `system_instruction`) ou complexidade do schema. Precisa de cota para
    reproduzir.
-3. Terminar os 342 templates restantes.
-4. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
+3. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
 ## Como ele trabalha
