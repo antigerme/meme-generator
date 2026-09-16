@@ -86,22 +86,29 @@ Validado rodando de verdade no Fedora 44 com Python 3.14.7: os 96 testes, o
 (conferida no `distracted_boyfriend`, o caso mais difícil — o modelo acertou os
 três papéis) e a retomada após interrupção, crash e cota esgotada.
 
+## O caminho completo funciona (16/09/2026)
+
+Situação → triagem → geração → imagem, ponta a ponta, com o usuário na frente.
+A triagem leva 3,7 s para peneirar os 836 contratos (108 mil caracteres) e
+devolver ~26 candidatos sensatos; a geração escreve o texto; o canvas desenha.
+
+O primeiro meme aprovado saiu com `gemini-3.5-flash-lite` na geração — o modelo
+**mais fraco** da família, usado porque a cota do `3.8-flash` (20/dia) tinha
+acabado. Sinal de que o peso está nos contratos, não na potência do modelo que
+escreve. Falta comparar com o `3.8-flash` para ver se a diferença justifica o
+limite apertado.
+
 ## Em aberto
 
-1. **O usuário nunca viu um meme gerado.** É o passo 6, o único que falta, e a
-   pergunta que decide o projeto: o texto tem graça? LLM escreve legenda de
-   meme sem graça por padrão. Atenção à cota: só 20 gerações por dia.
-2. **Só falta a geração rodar.** A triagem foi confirmada funcionando em
-   16/09: 3,7 s para peneirar os 836 (108 mil caracteres) e devolver 26
-   candidatos sensatos. A geração parou em 429 — a cota de 20/dia do
-   `gemini-3.8-flash` já tinha acabado. Não há bug conhecido nesse caminho,
-   só falta cota.
-3. **Bug no modo `full`:** `400: Request contains an invalid argument` no
+1. **Comparar a qualidade entre os modelos de geração.** O `3.5-flash-lite` já
+   entregou resultado bom. Vale medir se o `3.8-flash` compensa as 20
+   requisições diárias, ou se o lite basta e libera 500/dia.
+2. **Bug no modo `full`:** `400: Request contains an invalid argument` no
    Gemini. O enriquecimento fez 494 chamadas sem um 400, então é específico
    desse modo — suspeita de tamanho (manda ~220 KB de contratos no
    `system_instruction`) ou complexidade do schema. Precisa de cota para
    reproduzir.
-4. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
+3. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
 ## Ferramenta de diagnóstico
