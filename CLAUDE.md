@@ -111,6 +111,11 @@ systemd faz o serviço subir sozinho no boot.
 - `/etc/memegen.env` 0600 root, com a chave e `MEMEGEN_PROVIDER=gemini`
 - `memegen.felicio.com.br`, **sem autenticação**, por decisão dele — a VM fica
   desligada fora dos testes, o que limita a janela
+- Geração com `MEMEGEN_GENERATE_MODEL=gemini-3.5-flash-lite` nessa VM: 500/dia
+  em vez das 20 do `3.8-flash`, o que permite testar à vontade
+- **Validado de ponta a ponta no ar:** ele abriu o domínio e gerou memes. Toda
+  a corrente — Cloudflare, Apache, serviço, triagem, geração, canvas —
+  funcionando junta
 - O README tem os arquivos e o porquê de cada diretiva
 
 Três coisas descobertas montando isso:
@@ -144,8 +149,10 @@ gastar cota.
 ## Em aberto
 
 1. **Comparar a qualidade entre os modelos de geração.** O `3.5-flash-lite` já
-   entregou resultado bom. Vale medir se o `3.8-flash` compensa as 20
-   requisições diárias, ou se o lite basta e libera 500/dia.
+   entregou resultado bom, e é o que roda na VM hoje. Vale medir se o
+   `3.8-flash` compensa as 20 requisições diárias, ou se o lite basta e libera
+   500/dia. Com o lite na VM e o padrão no laptop, dá para comparar sem gastar
+   cota em dobro.
 2. **Bug no modo `full`:** `400: Request contains an invalid argument` no
    Gemini. O enriquecimento fez 494 chamadas sem um 400, então é específico
    desse modo — suspeita de tamanho (manda ~220 KB de contratos no
