@@ -130,6 +130,247 @@ desabilitado explicando por quê. Aí o caminho é **Copiar** e colar.
 O servidor não tem autenticação. Com `--host 0.0.0.0` fica visível para toda a
 rede local: use em rede de casa, não em wi-fi público.
 
+## Deploy — atrás de Apache e Cloudflare
+
+O `--https` com certificado autoassinado resolve o contexto seguro na rede
+local, mas pede aceite em todo aparelho. Para um hostname de verdade o caminho
+é terminar o TLS antes de chegar na máquina:
+
+```
+navegador --HTTPS--> Cloudflare --HTTP--> Apache :80 --> memegen 127.0.0.1:8000
+```
+
+O serviço escuta só em `127.0.0.1`: mesmo com o firewall aberto por engano,
+ninguém alcança a porta 8000 de fora. E como o navegador enxerga HTTPS,
+**Copiar e Compartilhar funcionam** — é a razão de pôr algo na frente.
+
+Validado em RHEL 8.10 com Python 3.6.8, a máquina que motiva a restrição de
+versão. As 118 passam lá.
+
+### O que precisa ir junto
+
+`dados/` não é versionado, e **as imagens têm que ir com os contratos**. O
+motivo não é óbvio: `_resumo` mede a largura real lendo o cabeçalho do JPEG
+local e, quando o arquivo não existe, cai para a dimensão declarada do
+catálogo — a que diverge em 779 dos 836. Como a imagem só é baixada quando o
+navegador pede `/template/<id>.jpg`, ou seja *depois* da sugestão já ter sido
+respondida, a primeira renderização de cada template sairia com o texto fora do
+lugar e a segunda certa. Defeito que não reproduz, dos caros de achar.
+
+O `enrich` chama `garantir_imagens`, mas só para os templates pendentes: com os
+contratos completos não há pendente e nada é baixado. Até existir um comando só
+para isso, copie as imagens.
+
+```console
+$ rsync -avz dados/ usuario@servidor:/opt/memegen/dados/
+```
+
+### A chave
+
+O `EnvironmentFile` do systemd não é shell: sem `export`, sem aspas (viram
+parte do valor) e sem espaço em volta do `=` (a variável fica vazia, em
+silêncio).
+
+```
+# /etc/memegen.env  —  chmod 600, dono root
+GEMINI_API_KEY=AIza...
+MEMEGEN_PROVIDER=gemini
+```
+
+O `MEMEGEN_PROVIDER` explícito evita que uma `ANTHROPIC_API_KEY` esquecida no
+ambiente troque de provedor sozinha — e com conta sem crédito isso vira um
+"credit balance is too low" vindo do nada.
+
+O systemd lê o arquivo como root antes de baixar para o usuário do serviço,
+então 0600 não atrapalha. Trocar a chave exige `restart`, não `reload`: o
+arquivo só é lido quando o processo nasce.
+
+### systemd
+
+```ini
+# /etc/systemd/system/memegen.service
+[Unit]
+Description=memegen - gerador de memes com IA
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+Group=opc
+WorkingDirectory=/opt/memegen
+EnvironmentFile=/etc/memegen.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/memegen/memegen.py serve --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ReadWritePaths=/opt/memegen/dados
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`PYTHONUNBUFFERED=1` não é enfeite. Sob o systemd a saída vai para um pipe do
+journal e o Python passa a bufferizar em bloco: sem isso um erro fica invisível
+no `journalctl` até o buffer encher. O `--debug` também depende disso para ser
+útil.
+
+`ProtectSystem=strict` deixa o sistema de arquivos inteiro somente-leitura,
+inclusive o próprio `memegen.py`; `ReadWritePaths` reabre só `dados/`, que é o
+único lugar onde o programa escreve — o `.tmp` da troca atômica fica ao lado do
+arquivo final, e o único `tempfile.mkstemp` está no caminho do certificado
+autoassinado, coberto pelo `PrivateTmp`.
+
+`NoNewPrivileges=yes` fecha a escalada por `sudo`, que importa quando o serviço
+roda com um usuário que tem sudo sem senha.
+
+`RestrictSUIDSGID` ficaria bem aqui, mas só existe do systemd 242 em diante e o
+RHEL 8 tem o 239.
+
+### Apache
+
+```apache
+# /etc/httpd/conf.d/memegen.conf
+<VirtualHost *:80>
+    ServerName memegen.exemplo.com.br
+
+    <IfModule pagespeed_module>
+        ModPagespeed off
+    </IfModule>
+
+    ProxyRequests Off
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:8000/ timeout=120
+    ProxyPassReverse / http://127.0.0.1:8000/
+
+    ErrorLog  logs/memegen_error.log
+    CustomLog logs/memegen_access.log combined
+</VirtualHost>
+```
+
+`ModPagespeed off` é obrigatório onde o `mod_pagespeed` estiver carregado. Ele
+reescreve HTML, CSS e JS em voo — minifica, combina, adia script. A página é um
+arquivo só com `<style>` e `<script>` embutidos e render em canvas: remexer
+nela quebra o desenho sem deixar rastro no código-fonte.
+
+`timeout=120` porque a geração soma triagem e escrita, cada uma com retentativa,
+e o padrão de 60s cortaria no meio.
+
+No SELinux, o Apache precisa de `httpd_can_network_connect` ligado para
+alcançar a porta local:
+
+```console
+$ sudo setsebool -P httpd_can_network_connect 1
+```
+
+### Atualizar o código
+
+Como o usuário do serviço, **nunca como root** — arquivo criado por root em
+`/opt/memegen` vira arquivo que o serviço não consegue escrever depois.
+
+```console
+$ cd /opt/memegen && git pull
+$ python3 -m unittest test_memegen -q > /dev/null 2>&1; echo "testes=$?"
+$ sudo systemctl restart memegen
+```
+
+O `restart` é necessário porque o processo carrega o código na memória.
+`dados/` não é versionado, então o `pull` nunca encosta no catálogo, nos
+contratos nem nas imagens.
+
+### sync e enrich automáticos
+
+O 9GAG publica template novo de vez em quando; o `sync` detecta pelo hash do
+bundle e o `enrich` escreve o contrato dos que chegaram. Um timer dá conta.
+
+```ini
+# /etc/systemd/system/memegen-sync.service
+[Unit]
+Description=memegen - sincroniza o catalogo do 9GAG e enriquece o que chegou
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+Group=opc
+WorkingDirectory=/opt/memegen
+EnvironmentFile=/etc/memegen.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/memegen/memegen.py sync
+ExecStart=/usr/bin/python3 /opt/memegen/memegen.py enrich --pausa 6
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/memegen/dados
+```
+
+```ini
+# /etc/systemd/system/memegen-sync.timer
+[Unit]
+Description=memegen - sync diario do catalogo do 9GAG
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Dois `ExecStart` num `Type=oneshot` rodam em sequência, e o segundo só roda se
+o primeiro sair com zero — se o `sync` falhar, o `enrich` nem começa.
+
+`Persistent=true` importa em máquina que fica desligada: sem ele, um disparo
+perdido é perdido para sempre; com ele, o timer roda logo depois do boot
+seguinte.
+
+Nada disso exige reiniciar o `memegen`. O cache em memória compara o mtime de
+`catalogo.json` e `contratos.json` a cada leitura e recarrega sozinho.
+
+Custo de uma rodada sem novidade: 12 KB para descobrir que o bundle não mudou,
+e o `enrich` sai na hora por não ter pendente. O `enrich.lock` impede que o
+timer atropele uma execução manual.
+
+```console
+$ sudo systemctl daemon-reload
+$ sudo systemctl enable --now memegen-sync.timer
+$ sudo systemctl start memegen-sync.service     # testa agora, sem esperar
+$ journalctl -u memegen-sync -n 30 --no-pager
+```
+
+### Cloudflare
+
+Registro `A` para o hostname apontando no IP do servidor, com o proxy **ligado**
+(nuvem laranja) — é ele que entrega o HTTPS e esconde o IP de origem. Com o
+Apache atendendo em HTTP puro, o modo SSL/TLS da zona é *Flexible*. Ligue
+*Always Use HTTPS*: se a página abrir em HTTP, `isSecureContext` fica falso e
+Copiar e Compartilhar voltam a ficar desabilitados.
+
+Duas coisas para saber antes de estranhar:
+
+**O Cloudflare corta requisição em 100 segundos** no plano gratuito, com erro
+524, e isso não é configurável fora do Enterprise. O caminho normal passa longe
+— a triagem mede 3,7s — mas um retry com backoff estoura, e aí você vê "524" no
+lugar do "429, cota excedida". Se encostar nisso, a saída é `/api/gerar`
+responder na hora e o resultado ser consultado depois.
+
+**O programa não tem autenticação.** Exposto num hostname público, qualquer um
+que o descubra gera meme com a sua cota. O Cloudflare Access resolve de graça,
+autenticando antes de a requisição sair do Cloudflare.
+
 ## Geometria
 
 As coordenadas das caixas não estão em pixels da imagem — estão num canvas de

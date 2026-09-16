@@ -3,7 +3,7 @@
 Projeto pessoal do André (`antigerme`). Conversa conduzida **em português**;
 código, commits e comentários em português também. Mantenha assim.
 
-Branch de trabalho: `claude/eager-darwin-7tbcru`.
+Branch de trabalho: `main`.
 
 ## O que é
 
@@ -98,6 +98,43 @@ acabado. Sinal de que o peso está nos contratos, não na potência do modelo qu
 escreve. Falta comparar com o `3.8-flash` para ver se a diferença justifica o
 limite apertado.
 
+## Em produção desde 16/09/2026
+
+VM RHEL 8.10 na Oracle Cloud, Python 3.6.8 — a máquina que motiva a restrição
+de versão. As 118 passam lá. Ele só liga a VM para testar; o `enable` do
+systemd faz o serviço subir sozinho no boot.
+
+    navegador --HTTPS--> Cloudflare --HTTP--> Apache :80 --> memegen 127.0.0.1:8000
+
+- `/opt/memegen`, código e `dados/`, dono `opc`. Ele recusou usuário de sistema;
+  `NoNewPrivileges=yes` fecha a escalada por sudo que o `opc` tem sem senha
+- `/etc/memegen.env` 0600 root, com a chave e `MEMEGEN_PROVIDER=gemini`
+- `memegen.felicio.com.br`, **sem autenticação**, por decisão dele — a VM fica
+  desligada fora dos testes, o que limita a janela
+- O README tem os arquivos e o porquê de cada diretiva
+
+Três coisas descobertas montando isso:
+
+**As imagens têm que viajar com os contratos.** `_resumo` mede a largura real
+lendo o cabeçalho do JPEG local e, sem o arquivo, cai para a dimensão declarada
+— a que diverge em 779 dos 836. A imagem só é baixada quando o navegador pede
+`/template/<id>.jpg`, depois da sugestão já ter sido respondida. Numa instalação
+nova sem as imagens, cada template erraria a primeira renderização e acertaria
+a segunda. Não reproduz.
+
+**`mod_pagespeed` quebraria a página.** O Apache dele carrega o módulo, que
+reescreve HTML/CSS/JS em voo. Uma página única com `<style>` e `<script>`
+embutidos e render em canvas não sobrevive a isso. O vhost tem `ModPagespeed
+off`.
+
+**`PYTHONUNBUFFERED=1` no unit.** Sob o systemd a saída vai para um pipe e o
+Python bufferiza em bloco: sem isso um erro fica invisível no `journalctl` até
+o buffer encher. A mesma armadilha nos pegou duas vezes na mesma sessão lendo
+saída de teste por pipe.
+
+O cache em memória compara o mtime de `catalogo.json` e `contratos.json` a cada
+leitura, então `sync` e `enrich` não exigem restart do serviço.
+
 ## Em aberto
 
 1. **Comparar a qualidade entre os modelos de geração.** O `3.5-flash-lite` já
@@ -108,7 +145,16 @@ limite apertado.
    desse modo — suspeita de tamanho (manda ~220 KB de contratos no
    `system_instruction`) ou complexidade do schema. Precisa de cota para
    reproduzir.
-3. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
+3. **Comando para só baixar as imagens.** `garantir_imagens` existe mas só o
+   `enrich` chama, e só para os pendentes. Com os contratos completos não há
+   pendente e nada é baixado — foi por isso que o deploy precisou de `rsync`
+   das imagens. Expor na CLI resolve.
+4. **Timeout de 100s do Cloudflare** (erro 524, não configurável fora do
+   Enterprise). O caminho normal passa longe, a triagem mede 3,7s, mas um retry
+   com backoff estoura e troca o "429, cota excedida" por um 524 confuso. Se
+   encostar, a saída é `/api/gerar` responder na hora e o resultado ser
+   consultado depois.
+5. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
 ## Ferramenta de diagnóstico
