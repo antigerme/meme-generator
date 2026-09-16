@@ -135,6 +135,12 @@ saída de teste por pipe.
 O cache em memória compara o mtime de `catalogo.json` e `contratos.json` a cada
 leitura, então `sync` e `enrich` não exigem restart do serviço.
 
+O `memegen-sync.timer` já está instalado e habilitado na VM: roda `sync` e
+depois `enrich --pausa 6` uma vez por dia, com `Persistent=true` para não
+perder o disparo enquanto a máquina está desligada. Custa nada quando não há
+novidade — o `enrich` checa os pendentes antes de tocar na API e sai sem
+gastar cota.
+
 ## Em aberto
 
 1. **Comparar a qualidade entre os modelos de geração.** O `3.5-flash-lite` já
