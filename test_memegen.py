@@ -1245,3 +1245,23 @@ class TestPensamentoGemini(Base):
             self.assertIn("timed out", texto)
         finally:
             M.time.sleep = time.sleep
+
+
+class TestPortaOcupada(Base):
+    """Porta em uso e situacao corriqueira: o servidor anterior nao morreu.
+    Merece instrucao, nao traceback -- ainda mais porque o processo velho
+    continua servindo o codigo antigo."""
+
+    def test_mensagem_explica_e_diz_como_resolver(self):
+        ocupado = M.Servidor(("127.0.0.1", 0), M.Handler)
+        porta = ocupado.server_address[1]
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                M.servir(host="127.0.0.1", porta=porta)
+            texto = str(ctx.exception)
+            self.assertIn(str(porta), texto)
+            self.assertIn("pkill", texto)
+            self.assertIn("--port", texto)
+            self.assertIn("codigo antigo", texto)
+        finally:
+            ocupado.server_close()

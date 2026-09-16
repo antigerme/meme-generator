@@ -20,6 +20,7 @@ nas versoes novas.
 
 import argparse
 import base64
+import errno
 import hashlib
 import io
 import json
@@ -2146,7 +2147,21 @@ class Servidor(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def servir(host="127.0.0.1", porta=8000, https=False):
     garantir_dirs()
-    httpd = Servidor((host, porta), Handler)
+    try:
+        httpd = Servidor((host, porta), Handler)
+    except OSError as e:
+        # porta ocupada e situacao corriqueira (o servidor anterior nao morreu),
+        # nao merece traceback
+        if getattr(e, "errno", None) not in (errno.EADDRINUSE,):
+            raise
+        raise RuntimeError(
+            "a porta %d ja esta em uso.\n"
+            "Provavelmente um servidor anterior continua rodando -- e ele tem o "
+            "codigo antigo.\n"
+            "  encerre com:  pkill -f \"%s serve\"\n"
+            "  ou use outra: %s serve --port %d"
+            % (porta, os.path.basename(sys.argv[0]),
+               os.path.basename(sys.argv[0]), porta + 1))
     esquema = "http"
     if https:
         cert, chave = gerar_certificado()
