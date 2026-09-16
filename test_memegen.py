@@ -919,9 +919,14 @@ class TestErroGemini(unittest.TestCase):
         self.assertFalse(M._e_temporario(
             403, "PERMISSION_DENIED API key not valid for this project"))
 
-    def test_429_e_5xx_sao_repetiveis(self):
-        self.assertTrue(M._e_temporario(429, "too many requests"))
+    def test_5xx_e_repetivel(self):
         self.assertTrue(M._e_temporario(503, "service unavailable"))
+        self.assertTrue(M._e_temporario(500, "internal error"))
+
+    def test_429_nao_passa_por_aqui(self):
+        """A insistencia no 429 e decidida por contagem, nao pela mensagem --
+        ver TestNaoRepeteCotaEsgotada."""
+        self.assertFalse(M._e_temporario(429, "too many requests"))
 
     def test_400_nao_e_repetivel(self):
         self.assertFalse(M._e_temporario(400, "invalid schema"))
@@ -987,8 +992,9 @@ class TestRetryGemini(Base):
         self.assertEqual(estado["n"], 1)       # falhou uma vez e desistiu
 
     def test_desiste_depois_do_limite_de_tentativas(self):
-        corpo = json.dumps({"error": {"code": 429, "message": "rate limit"}})
-        estado = self._falhar_n_vezes(99, 429, corpo)
+        """5xx esgota as quatro tentativas; o 429 tem limite proprio, menor."""
+        corpo = json.dumps({"error": {"code": 503, "status": "UNAVAILABLE"}})
+        estado = self._falhar_n_vezes(99, 503, corpo)
         with self.assertRaises(RuntimeError):
             M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
         self.assertEqual(estado["n"], 4)
@@ -1338,3 +1344,97 @@ class TestDepuracao(Base):
             self.assertIn("tentativa 4/4", texto)     # mostra cada retry
         finally:
             M.time.sleep = time.sleep
+
+
+class TestNaoRepeteCotaEsgotada(unittest.TestCase):
+    """Cota diaria esgotada nao volta hoje, e cada tentativa ainda consome
+    cota. Visto na pratica: quatro tentativas contra um limite ja estourado
+    queimaram tres requisicoes a toa."""
+
+    COTA_DIARIA = ("You exceeded your current quota, please check your plan and "
+                   "billing details. * Quota exceeded for metric: "
+                   "generativelanguage.googleapis.com/generate_content_free_tier"
+                   "_requests, limit: 20, model: gemini-3.8-flash")
+
+    def test_429_nao_se_decide_pela_mensagem(self):
+        """As mensagens do Google nao distinguem limite por minuto de cota
+        diaria: a de cota diaria de 500 tambem dizia "retry in 20.8s", e as
+        duas trazem RESOURCE_EXHAUSTED e "billing details". A decisao fica na
+        contagem de tentativas, nao numa classificacao que nao se sustenta."""
+        por_minuto = "RESOURCE_EXHAUSTED rate limit exceeded, retry in 20s"
+        self.assertFalse(M._e_temporario(429, self.COTA_DIARIA))
+        self.assertFalse(M._e_temporario(429, por_minuto))
+        self.assertEqual(M.TENTATIVAS_429, 1)
+
+    def test_403_por_taxa_continua_repetivel(self):
+        self.assertTrue(M._e_temporario(
+            403, "PERMISSION_DENIED (RATE_LIMIT_EXCEEDED)"))
+
+    def test_erro_de_servidor_continua_repetivel(self):
+        self.assertTrue(M._e_temporario(503, "UNAVAILABLE Service Unavailable"))
+
+    def test_a_metrica_sobrevive_ao_corte(self):
+        """O nome da metrica e o limite dizem QUAL cota estourou."""
+        corpo = json.dumps({"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                                      "message": self.COTA_DIARIA}})
+        detalhe, _ = M._detalhe_gemini(corpo)
+        self.assertIn("free_tier_requests", detalhe)
+        self.assertIn("limit: 20", detalhe)
+        self.assertIn("gemini-3.8-flash", detalhe)
+
+
+class TestInsistenciaNo429(Base):
+    """Um 429 merece uma segunda chance (limite por minuto passa), mas nao
+    quatro (cota diaria nao volta, e cada tentativa consome cota)."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._antes = dict((k, os.environ.get(k)) for k in
+                           ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MEMEGEN_PROVIDER"))
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["GEMINI_API_KEY"] = "k"
+        os.environ["MEMEGEN_PROVIDER"] = "gemini"
+        self._urlopen, self._sleep = M.urlopen, M.time.sleep
+        M.time.sleep = lambda s: None
+
+    def tearDown(self):
+        M.urlopen, M.time.sleep = self._urlopen, self._sleep
+        for k, v in self._antes.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def _contar(self, codigo, corpo, falhas=99):
+        estado = {"n": 0}
+
+        def falso(req, timeout=None):
+            estado["n"] += 1
+            if estado["n"] <= falhas:
+                raise HTTPError(req.get_full_url(), codigo, "erro", {},
+                                io.BytesIO(corpo.encode()))
+            return RespostaFalsa({"output_text": "{}"})
+        M.urlopen = falso
+        return estado
+
+    def test_429_insiste_uma_vez_so(self):
+        corpo = json.dumps({"error": {"code": 429, "message": "quota exceeded"}})
+        estado = self._contar(429, corpo)
+        with self.assertRaises(RuntimeError):
+            M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(estado["n"], 2)      # a original e uma repeticao
+
+    def test_429_que_passa_na_segunda_vai_em_frente(self):
+        corpo = json.dumps({"error": {"code": 429, "message": "rate limit"}})
+        estado = self._contar(429, corpo, falhas=1)
+        M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(estado["n"], 2)
+
+    def test_503_continua_insistindo_ate_o_fim(self):
+        """Falha de servidor e transitoria de verdade e nao consome cota."""
+        corpo = json.dumps([{"error": {"status": "UNAVAILABLE"}}])
+        estado = self._contar(503, corpo)
+        with self.assertRaises(RuntimeError):
+            M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(estado["n"], 4)

@@ -458,7 +458,7 @@ def _detalhe_gemini(bruto):
     RESOURCE_EXHAUSTED...) e um `details` com o motivo real. Guardar so a
     mensagem escondia que um 403 podia ser limite de taxa disfarcado.
     """
-    resumo = (bruto or "").strip()[:300]
+    resumo = (bruto or "").strip()[:600]
     try:
         corpo = json.loads(bruto)
     except ValueError:
@@ -473,6 +473,7 @@ def _detalhe_gemini(bruto):
     if not isinstance(corpo, dict):
         return resumo, ""
 
+
     erro = corpo.get("error")
     if not isinstance(erro, dict):
         erro = corpo                      # alguns corpos trazem os campos na raiz
@@ -481,7 +482,10 @@ def _detalhe_gemini(bruto):
     for chave in ("status", "message"):
         valor = erro.get(chave)
         if isinstance(valor, str) and valor:
-            partes.append(valor)
+            # a mensagem de cota carrega a metrica e o limite no fim
+            # ("...free_tier_requests, limit: 20, model: ..."); cortar curto
+            # demais escondia justamente qual cota estourou
+            partes.append(valor if len(valor) <= 600 else valor[:600] + "...")
 
     motivos = []
     detalhes = erro.get("details")
@@ -500,12 +504,15 @@ def _detalhe_gemini(bruto):
 
 
 def _e_temporario(codigo, detalhe):
-    """Vale a pena repetir? Limite de taxa e falha do servidor, sim.
+    """Vale a pena repetir? Limite por minuto e falha do servidor, sim.
 
     O Google devolve 403 tanto para permissao de verdade quanto para limite de
     taxa, entao o codigo sozinho nao decide -- e preciso olhar o motivo.
+
+    O 429 fica de fora daqui porque a decisao dele nao e binaria -- veja
+    TENTATIVAS_429 no laco de chamada.
     """
-    if codigo == 429 or codigo >= 500:
+    if codigo >= 500:
         return True
     if codigo == 403:
         alvo = detalhe.lower()
@@ -518,6 +525,15 @@ def _e_temporario(codigo, detalhe):
 # max_output_tokens do Gemini limita pensamento + saida SOMADOS, entao mandar
 # so o tamanho da resposta truncaria o resultado no meio.
 FOLGA_PENSAMENTO = {"low": 4000, "medium": 12000, "high": 32000}
+
+# Quantas vezes insistir num 429. Um so, de proposito: as mensagens do Google
+# NAO distinguem limite por minuto de cota diaria esgotada -- a de cota diaria
+# de 500 tambem dizia "Please retry in 20.8s", e as duas trazem
+# RESOURCE_EXHAUSTED e "check your plan and billing details". Diante da duvida,
+# uma tentativa extra recupera o limite por minuto, que costuma passar, e limita
+# a uma requisicao o desperdicio quando a cota do dia ja acabou. Quatro
+# tentativas contra um limite estourado queimaram tres requisicoes a toa.
+TENTATIVAS_429 = 1
 
 
 def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
@@ -557,6 +573,7 @@ def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
     depurar("  carga: %s", _resumir(carga))
 
     resposta = None
+    repeticoes_429 = 0
     for n in range(tentativas):
         inicio = time.time()
         try:
@@ -578,7 +595,12 @@ def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
             detalhe, _ = _detalhe_gemini(bruto)
             depurar("  HTTP %d em %.1fs: %s", e.code, time.time() - inicio,
                     detalhe[:300])
-            if _e_temporario(e.code, detalhe) and n < tentativas - 1:
+            if e.code == 429:
+                pode = repeticoes_429 < TENTATIVAS_429
+                repeticoes_429 += 1
+            else:
+                pode = _e_temporario(e.code, detalhe)
+            if pode and n < tentativas - 1:
                 time.sleep(2 ** n * 3)        # 3s, 6s, 12s
                 continue
             raise RuntimeError("Gemini respondeu %s: %s" % (e.code, detalhe))

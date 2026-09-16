@@ -225,7 +225,7 @@ enviado.
 ## Testes
 
 ```console
-$ python3 -m unittest -v        # 110 testes, também sem dependências
+$ python3 -m unittest -v        # 118 testes, também sem dependências
 ```
 
 Não precisam de rede nem de chave: o catálogo vem de um fixture embutido e as
