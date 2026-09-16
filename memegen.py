@@ -476,14 +476,33 @@ def _e_temporario(codigo, detalhe):
     return False
 
 
+# Quanto de pensamento cada nivel pode gastar, alem do texto pedido. O
+# max_output_tokens do Gemini limita pensamento + saida SOMADOS, entao mandar
+# so o tamanho da resposta truncaria o resultado no meio.
+FOLGA_PENSAMENTO = {"low": 4000, "medium": 12000, "high": 32000}
+
+
 def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
-                  timeout=90, tentativas=4):
+                  timeout=90, tentativas=4, pensamento="low"):
     """Uma interacao com o Gemini. Devolve (texto, uso).
+
+    Os modelos 3.x raciocinam por padrao, em `thinking_level: medium`, e sem
+    `max_output_tokens` nao ha teto para isso. Foi o que travou a triagem:
+    escolher entre 836 templates com pensamento medio e sem limite estourava
+    os 90s de timeout, quatro vezes seguidas.
 
     Timeout curto de proposito: uma chamada presa com timeout longo parece a
     aplicacao travada. Falhar rapido e repetir e melhor do que esperar.
     """
-    carga = {"model": modelo, "input": blocos}
+    nivel = os.environ.get("MEMEGEN_THINKING") or pensamento
+    carga = {
+        "model": modelo,
+        "input": blocos,
+        "generation_config": {
+            "thinking_level": nivel,
+            "max_output_tokens": max_tokens + FOLGA_PENSAMENTO.get(nivel, 12000),
+        },
+    }
     if sistema:
         carga["system_instruction"] = sistema
     if schema:
@@ -515,7 +534,9 @@ def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
             raise RuntimeError("Gemini respondeu %s: %s" % (e.code, detalhe))
         except (URLError, socket.error, ssl.SSLError) as e:
             if n == tentativas - 1:
-                raise RuntimeError("Gemini nao respondeu: %s" % e)
+                raise RuntimeError(
+                    "Gemini nao respondeu depois de %d tentativas de %ds: %s"
+                    % (tentativas, timeout, e))
             time.sleep(2 ** n * 3)
 
     texto = resposta.get("output_text")
@@ -574,6 +595,11 @@ def _blocos_gemini(texto, imagem=None):
     return blocos
 
 
+# A triagem e peneira, nao raciocinio: escolher ids de uma lista nao melhora
+# com pensamento profundo, e foi onde o custo apareceu. Escrever o meme, sim.
+PENSAMENTO_POR_PAPEL = {"triar": "low", "enriquecer": "low", "gerar": "medium"}
+
+
 def gerar_json(sistema, texto, schema, papel, imagem=None, modelo=None,
                max_tokens=4000, cachear_sistema=False):
     """Pede uma resposta em JSON ao provedor ativo. Devolve (dados, uso).
@@ -587,7 +613,8 @@ def gerar_json(sistema, texto, schema, papel, imagem=None, modelo=None,
     if qual == "gemini":
         bruto, uso = chamar_gemini(
             "\n\n".join(sistema) if isinstance(sistema, list) else sistema,
-            _blocos_gemini(texto, imagem), schema, modelo, max_tokens)
+            _blocos_gemini(texto, imagem), schema, modelo, max_tokens,
+            pensamento=PENSAMENTO_POR_PAPEL.get(papel, "low"))
     else:
         partes = sistema if isinstance(sistema, list) else [sistema]
         blocos_sistema = []
@@ -608,7 +635,8 @@ def gerar_json(sistema, texto, schema, papel, imagem=None, modelo=None,
     try:
         return json.loads(bruto), uso
     except ValueError:
-        raise RuntimeError("o modelo nao devolveu JSON valido: %s" % bruto[:300])
+        raise RuntimeError("na etapa '%s', o modelo nao devolveu JSON valido: %s"
+                           % (papel, bruto[:300]))
 
 
 # ------------------------------------------------------------------- trava

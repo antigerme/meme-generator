@@ -17,6 +17,7 @@ import shutil
 import struct
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 from urllib.request import urlopen, Request
@@ -1155,3 +1156,92 @@ class TestTrava(Base):
     def test_processo_vivo_reconhece_a_si_mesmo(self):
         self.assertTrue(M._processo_vivo(os.getpid()))
         self.assertFalse(M._processo_vivo(999999))
+
+
+class TestPensamentoGemini(Base):
+    """Os modelos 3.x raciocinam por padrao em nivel medio, e sem
+    max_output_tokens nao ha teto. Foi o que travou a triagem sobre 836
+    templates: quatro timeouts de 90s seguidos."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._antes = dict((k, os.environ.get(k)) for k in
+                           ("ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+                            "MEMEGEN_PROVIDER", "MEMEGEN_THINKING"))
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("MEMEGEN_THINKING", None)
+        os.environ["GEMINI_API_KEY"] = "k"
+        os.environ["MEMEGEN_PROVIDER"] = "gemini"
+        self._urlopen = M.urlopen
+        self.enviado = []
+
+        def falso(req, timeout=None):
+            self.enviado.append(json.loads(req.data.decode("utf-8")))
+            return RespostaFalsa({"output_text": "{}"})
+        M.urlopen = falso
+
+    def tearDown(self):
+        M.urlopen = self._urlopen
+        for k, v in self._antes.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def _config(self, papel, max_tokens=4000):
+        M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, papel, max_tokens=max_tokens)
+        return self.enviado[-1]["generation_config"]
+
+    def test_triagem_pensa_pouco(self):
+        """Peneirar ids de uma lista nao melhora com pensamento profundo."""
+        self.assertEqual(self._config("triar")["thinking_level"], "low")
+
+    def test_geracao_pensa_mais(self):
+        """Escrever o texto do meme e onde o raciocinio ajuda."""
+        self.assertEqual(self._config("gerar")["thinking_level"], "medium")
+
+    def test_teto_cobre_pensamento_alem_da_resposta(self):
+        """max_output_tokens limita pensamento + saida somados; mandar so o
+        tamanho da resposta truncaria o resultado no meio."""
+        cfg = self._config("triar", max_tokens=1500)
+        self.assertEqual(cfg["max_output_tokens"],
+                         1500 + M.FOLGA_PENSAMENTO["low"])
+        cfg = self._config("gerar", max_tokens=4000)
+        self.assertEqual(cfg["max_output_tokens"],
+                         4000 + M.FOLGA_PENSAMENTO["medium"])
+
+    def test_sempre_manda_teto(self):
+        """Sem teto, o modelo pode pensar indefinidamente -- foi o bug."""
+        for papel in ("triar", "gerar", "enriquecer"):
+            cfg = self._config(papel)
+            self.assertIn("max_output_tokens", cfg)
+            self.assertGreater(cfg["max_output_tokens"], 0)
+
+    def test_variavel_sobrescreve_o_nivel(self):
+        os.environ["MEMEGEN_THINKING"] = "high"
+        cfg = self._config("triar", max_tokens=1000)
+        self.assertEqual(cfg["thinking_level"], "high")
+        self.assertEqual(cfg["max_output_tokens"],
+                         1000 + M.FOLGA_PENSAMENTO["high"])
+
+    def test_erro_de_json_diz_a_etapa(self):
+        M.urlopen = lambda req, timeout=None: RespostaFalsa(
+            {"output_text": "nao sou json"})
+        with self.assertRaises(RuntimeError) as ctx:
+            M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertIn("triar", str(ctx.exception))
+
+    def test_timeout_diz_quantas_tentativas(self):
+        def estoura(req, timeout=None):
+            raise URLError("The read operation timed out")
+        M.urlopen = estoura
+        M.time.sleep = lambda s: None
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+            texto = str(ctx.exception)
+            self.assertIn("tentativas", texto)
+            self.assertIn("timed out", texto)
+        finally:
+            M.time.sleep = time.sleep

@@ -79,12 +79,16 @@ três papéis) e a retomada após interrupção, crash e cota esgotada.
 1. **O usuário nunca viu um meme gerado.** É o passo 6, o único que falta, e a
    pergunta que decide o projeto: o texto tem graça? LLM escreve legenda de
    meme sem graça por padrão. Atenção à cota: só 20 gerações por dia.
-2. **Bug no modo `full`:** `400: Request contains an invalid argument` no
+2. **Gemini 3.x raciocina por padrão.** `thinking_level` vem em `medium` e
+   `max_output_tokens` limita pensamento + saída somados. Sem enviar os dois, a
+   triagem sobre 836 templates estourava quatro timeouts de 90s. Corrigido —
+   mas se algo voltar a ficar lento, é o primeiro lugar para olhar.
+3. **Bug no modo `full`:** `400: Request contains an invalid argument` no
    Gemini. O enriquecimento fez 494 chamadas sem um 400, então é específico
    desse modo — suspeita de tamanho (manda ~220 KB de contratos no
    `system_instruction`) ou complexidade do schema. Precisa de cota para
    reproduzir.
-3. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
+4. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
 ## Como ele trabalha
