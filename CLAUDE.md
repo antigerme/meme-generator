@@ -91,6 +91,13 @@ três papéis) e a retomada após interrupção, crash e cota esgotada.
 4. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
+## Ferramenta de diagnóstico
+
+`--debug` (ou `MEMEGEN_DEBUG=1`) imprime cada chamada ao modelo: etapa, carga
+enviada, `generation_config`, tentativa, tempo e resposta. Use antes de
+formular hipótese sobre lentidão ou erro de API — foi criado exatamente porque
+estávamos adivinhando.
+
 ## Como ele trabalha
 
 Pediu passo a passo, um comando por vez, esperando a saída antes de seguir.

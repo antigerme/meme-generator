@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -1265,3 +1266,75 @@ class TestPortaOcupada(Base):
             self.assertIn("codigo antigo", texto)
         finally:
             ocupado.server_close()
+
+
+class TestDepuracao(Base):
+    """Sem instrumentacao, uma chamada lenta e uma caixa preta: nao da para
+    saber se e a etapa, o tamanho da carga, o retry ou o servidor."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._antes = dict((k, os.environ.get(k)) for k in
+                           ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MEMEGEN_PROVIDER"))
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["GEMINI_API_KEY"] = "k"
+        os.environ["MEMEGEN_PROVIDER"] = "gemini"
+        self._urlopen, self._depurar = M.urlopen, M.DEPURAR
+        self._stderr = sys.stderr
+        sys.stderr = self.saida = io.StringIO()
+        M.urlopen = lambda req, timeout=None: RespostaFalsa({"output_text": "{}"})
+
+    def tearDown(self):
+        sys.stderr = self._stderr
+        M.urlopen, M.DEPURAR = self._urlopen, self._depurar
+        for k, v in self._antes.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def test_calado_por_padrao(self):
+        M.DEPURAR = False
+        M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+        self.assertEqual(self.saida.getvalue(), "")
+
+    def test_ligado_mostra_etapa_carga_e_tempo(self):
+        M.DEPURAR = True
+        M.gerar_json("instrucao", "pergunta", M.ESQUEMA_TRIAGEM, "triar")
+        texto = self.saida.getvalue()
+        self.assertIn("etapa 'triar'", texto)         # qual etapa
+        self.assertIn("thinking_level", texto)        # o que foi enviado
+        self.assertIn("tentativa 1/4", texto)         # em que tentativa esta
+        self.assertIn("ok em", texto)                 # quanto demorou
+
+    def test_esconde_o_base64_das_imagens(self):
+        """Uma imagem em base64 enterraria todo o resto do log."""
+        M.DEPURAR = True
+        carga = {"input": [{"type": "image", "data": "A" * 5000,
+                            "mime_type": "image/jpeg"}]}
+        resumo = M._resumir(carga)
+        self.assertNotIn("AAAA", resumo)
+        self.assertIn("bytes de imagem", resumo)
+
+    def test_trunca_texto_longo_sem_quebrar(self):
+        resumo = M._resumir({"texto": "x" * 9000})
+        self.assertLess(len(resumo), 5000)
+        self.assertIn("chars", resumo)
+
+    def test_carga_nao_serializavel_nao_derruba(self):
+        self.assertIsInstance(M._resumir({"obj": object()}), str)
+
+    def test_falha_de_rede_e_registrada_com_tempo(self):
+        M.DEPURAR = True
+        M.urlopen = lambda req, timeout=None: (_ for _ in ()).throw(
+            URLError("timed out"))
+        M.time.sleep = lambda s: None
+        try:
+            with self.assertRaises(RuntimeError):
+                M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
+            texto = self.saida.getvalue()
+            self.assertIn("falhou em", texto)
+            self.assertIn("tentativa 4/4", texto)     # mostra cada retry
+        finally:
+            M.time.sleep = time.sleep

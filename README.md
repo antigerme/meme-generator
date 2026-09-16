@@ -207,10 +207,25 @@ insistir à toa.
 
 `sync` e a navegação de templates funcionam sem chave nenhuma.
 
+## Depuração
+
+```console
+$ ./memegen.py serve --debug        # ou enrich --debug, make --debug
+$ MEMEGEN_DEBUG=1 ./memegen.py serve
+```
+
+Imprime em stderr cada chamada ao modelo: a etapa, o modelo, o tamanho da
+carga, o `generation_config` enviado, a tentativa atual, o tempo decorrido e a
+resposta. O base64 das imagens aparece resumido, senão enterraria o resto.
+
+Serve para responder "por que está lento" sem adivinhar — mostra se o tempo
+está na triagem ou na geração, se o retry está rodando, e o que de fato foi
+enviado.
+
 ## Testes
 
 ```console
-$ python3 -m unittest -v        # 104 testes, também sem dependências
+$ python3 -m unittest -v        # 110 testes, também sem dependências
 ```
 
 Não precisam de rede nem de chave: o catálogo vem de um fixture embutido e as

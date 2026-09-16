@@ -112,6 +112,37 @@ LARGURA_CANVAS = 640.0
 
 AGENTE = "memegen/%s (personal project; syncs public meme template catalog)" % __version__
 
+# Modo depuracao: imprime cada chamada ao modelo com tamanho, tempo e resposta.
+# Ligado por --debug ou MEMEGEN_DEBUG=1. Vai para stderr, para nao se misturar
+# com a saida util dos comandos.
+DEPURAR = bool(os.environ.get("MEMEGEN_DEBUG"))
+
+
+def depurar(msg, *args):
+    if not DEPURAR:
+        return
+    sys.stderr.write("[debug %s] %s\n"
+                     % (time.strftime("%H:%M:%S"), (msg % args) if args else msg))
+    sys.stderr.flush()
+
+
+def _resumir(carga, limite=700):
+    """Serializa a carga escondendo o base64 das imagens, que ocupa tudo."""
+    def poda(v):
+        if isinstance(v, dict):
+            return dict((k, ("<%d bytes de imagem>" % len(v[k]))
+                            if k == "data" and isinstance(v[k], str) and len(v[k]) > 200
+                            else poda(v[k])) for k in v)
+        if isinstance(v, list):
+            return [poda(x) for x in v]
+        if isinstance(v, str) and len(v) > limite:
+            return v[:limite] + ("... (+%d chars)" % (len(v) - limite))
+        return v
+    try:
+        return json.dumps(poda(carga), ensure_ascii=False)[:4000]
+    except Exception:  # noqa: BLE001
+        return "<nao serializavel>"
+
 
 def agora():
     """Timestamp ISO em UTC. datetime.utcnow() e obsoleto no 3.12+."""
@@ -365,15 +396,21 @@ def chamar_api(caminho, carga=None, metodo=None, timeout=300):
     url = API + caminho
     cab = _cabecalhos_api()
     corpo = json.dumps(carga).encode("utf-8") if carga is not None else None
+    depurar("anthropic -> %s (%d bytes)", caminho, len(corpo or b""))
+    if carga is not None:
+        depurar("  carga: %s", _resumir(carga))
+    inicio = time.time()
     req = Request(url, data=corpo, headers=cab)
     if metodo:
         req.get_method = lambda: metodo
     try:
         r = urlopen(req, timeout=timeout)
         try:
-            return json.loads(r.read().decode("utf-8"))
+            dados = json.loads(r.read().decode("utf-8"))
         finally:
             r.close()
+        depurar("  ok em %.1fs", time.time() - inicio)
+        return dados
     except HTTPError as e:
         # o HTTPError tambem e um arquivo: sem fechar, o 3.14 emite
         # ResourceWarning quando o coletor o recolhe
@@ -514,14 +551,24 @@ def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
     cab = {"x-goog-api-key": chave_gemini(), "Content-Type": "application/json"}
     corpo = json.dumps(carga).encode("utf-8")
 
+    depurar("gemini -> %s", url)
+    depurar("  modelo=%s  corpo=%d bytes  config=%s",
+            modelo, len(corpo), json.dumps(carga.get("generation_config")))
+    depurar("  carga: %s", _resumir(carga))
+
     resposta = None
     for n in range(tentativas):
+        inicio = time.time()
         try:
+            depurar("  tentativa %d/%d (timeout %ds)...", n + 1, tentativas, timeout)
             r = urlopen(Request(url, data=corpo, headers=cab), timeout=timeout)
             try:
-                resposta = json.loads(r.read().decode("utf-8"))
+                bruto_ok = r.read()
+                resposta = json.loads(bruto_ok.decode("utf-8"))
             finally:
                 r.close()
+            depurar("  ok em %.1fs, %d bytes", time.time() - inicio, len(bruto_ok))
+            depurar("  resposta: %s", _resumir(resposta))
             break
         except HTTPError as e:
             try:
@@ -529,11 +576,15 @@ def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
             finally:
                 e.close()
             detalhe, _ = _detalhe_gemini(bruto)
+            depurar("  HTTP %d em %.1fs: %s", e.code, time.time() - inicio,
+                    detalhe[:300])
             if _e_temporario(e.code, detalhe) and n < tentativas - 1:
                 time.sleep(2 ** n * 3)        # 3s, 6s, 12s
                 continue
             raise RuntimeError("Gemini respondeu %s: %s" % (e.code, detalhe))
         except (URLError, socket.error, ssl.SSLError) as e:
+            depurar("  falhou em %.1fs: %s: %s", time.time() - inicio,
+                    type(e).__name__, e)
             if n == tentativas - 1:
                 raise RuntimeError(
                     "Gemini nao respondeu depois de %d tentativas de %ds: %s"
@@ -610,6 +661,10 @@ def gerar_json(sistema, texto, schema, papel, imagem=None, modelo=None,
     """
     modelo = modelo or modelo_padrao(papel)
     qual = provedor()
+    depurar("etapa '%s' via %s: instrucao=%d chars, pedido=%d chars, imagem=%s",
+            papel, qual,
+            sum(len(x) for x in (sistema if isinstance(sistema, list) else [sistema])),
+            len(texto), os.path.basename(imagem) if imagem else "nao")
 
     if qual == "gemini":
         bruto, uso = chamar_gemini(
@@ -2391,6 +2446,8 @@ def main(argv=None):
     e.add_argument("--pausa", type=float, default=1.0,
                    help="segundos entre chamadas no modo sequencial (Gemini)")
     e.add_argument("--dry-run", action="store_true", help="mostra o que faria")
+    e.add_argument("--debug", action="store_true",
+                   help="imprime cada chamada ao modelo: carga, tempo e resposta")
     e.set_defaults(func=cmd_enrich)
 
     m = sub.add_parser("make", help="sugere memes (texto; imagem so em `serve`)")
@@ -2399,11 +2456,15 @@ def main(argv=None):
     m.add_argument("--model", help="depende do provedor; veja `status`")
     m.add_argument("--modo", choices=["shortlist", "full"], default="shortlist")
     m.add_argument("--nsfw", action="store_true")
+    m.add_argument("--debug", action="store_true",
+                   help="imprime cada chamada ao modelo: carga, tempo e resposta")
     m.set_defaults(func=cmd_make)
 
     w = sub.add_parser("serve", help="abre a interface web local")
     w.add_argument("--host", default="127.0.0.1")
     w.add_argument("--port", type=int, default=8000)
+    w.add_argument("--debug", action="store_true",
+                   help="imprime cada chamada ao modelo: carga, tempo e resposta")
     w.add_argument("--https", action="store_true",
                    help="HTTPS com certificado autoassinado; necessario para "
                         "copiar e compartilhar fora de localhost (ex.: do celular)")
@@ -2417,6 +2478,9 @@ def main(argv=None):
     a.set_defaults(func=cmd_audit)
 
     args = p.parse_args(argv)
+    global DEPURAR
+    if getattr(args, "debug", False):
+        DEPURAR = True
     if not getattr(args, "func", None):       # required=True em subparsers e 3.7+
         p.print_help()
         return 1
