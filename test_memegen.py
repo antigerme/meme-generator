@@ -159,6 +159,37 @@ class TestCatalogo(Base):
         contratos["drake"]["source_hash"] = "velho"
         self.assertEqual(M.contratos_pendentes(self.catalogo, contratos), ["drake"])
 
+    def test_uso_gemini_le_os_nomes_que_a_api_usa_hoje(self):
+        """A API responde total_input_tokens; a lista antiga nao tinha esse
+        nome e devolvia zero calado. O sintoma era 'total 0+0 tok' numa
+        chamada que gastou 28 mil."""
+        real = {"usage": {"total_tokens": 28215, "total_input_tokens": 27929,
+                          "total_output_tokens": 286, "total_cached_tokens": 16323,
+                          "total_thought_tokens": 1222}}
+        u = M._uso_gemini(real)
+        self.assertEqual(u["input"], 27929)
+        self.assertEqual(u["output"], 286)
+        self.assertEqual(u["cache_read"], 16323)
+        self.assertEqual(u["pensamento"], 1222)
+
+    def test_uso_gemini_devolve_none_quando_nao_sabe_ler(self):
+        """None e nao zero: zero e uma medicao, None e a ausencia dela."""
+        u = M._uso_gemini({"usage": {"nome_que_ninguem_viu": 5}})
+        self.assertIsNone(u["input"])
+        self.assertIsNone(u["output"])
+        self.assertEqual(M._tok(u), "?+?")
+
+    def test_uso_gemini_aceita_nomes_antigos(self):
+        for chave, esperado in (("input_tokens", 10), ("promptTokenCount", 10),
+                                ("inputTokens", 10), ("prompt_tokens", 10)):
+            u = M._uso_gemini({"usage": {chave: esperado}})
+            self.assertEqual(u["input"], esperado, chave)
+
+    def test_tok_nao_inventa_zero(self):
+        self.assertEqual(M._tok({"input": 27929, "output": 286}), "27929+286")
+        self.assertEqual(M._tok({"input": 0, "output": 0}), "0+0")
+        self.assertEqual(M._tok({"input": None, "output": 5}), "?+5")
+
     def test_gravar_json_e_atomico(self):
         alvo = os.path.join(self.tmp, "x.json")
         M.gravar_json(alvo, {"a": 1})
@@ -794,9 +825,12 @@ class TestGemini(Base):
         self.assertEqual((uso["input"], uso["output"]), (120, 30))
 
     def test_sem_contagem_nao_quebra(self):
+        """Resposta sem bloco de uso nao derruba a chamada -- mas a contagem
+        volta None, nao zero. Zero seria uma medicao; None diz que nao houve."""
         self._responder({"output_text": "{}"})
         _, uso = M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar")
-        self.assertEqual((uso["input"], uso["output"]), (0, 0))
+        self.assertEqual((uso["input"], uso["output"]), (None, None))
+        self.assertEqual(M._tok(uso), "?+?")       # e continua imprimivel
 
     def test_resposta_sem_texto_da_erro_claro(self):
         self._responder({"steps": []})

@@ -631,7 +631,13 @@ def chamar_gemini(sistema, blocos, schema=None, modelo=None, max_tokens=4000,
 
 def _uso_gemini(resposta):
     """Contagem de tokens. Os nomes variam entre versoes da API, entao
-    procuramos os que ja apareceram antes de desistir e devolver zero."""
+    procuramos os que ja apareceram.
+
+    Quando nenhum nome casa devolvemos None, nao zero. A versao anterior
+    devolvia zero e imprimia "total 0+0 tok", indistinguivel de uma chamada
+    que realmente nao gastou nada -- foi assim que a API passou a responder
+    `total_input_tokens` e ninguem percebeu que a medicao tinha parado.
+    """
     u = (resposta.get("usage") or resposta.get("usageMetadata")
          or resposta.get("usage_metadata") or {})
 
@@ -639,13 +645,16 @@ def _uso_gemini(resposta):
         for n in nomes:
             if isinstance(u.get(n), int):
                 return u[n]
-        return 0
+        return None
 
-    return {"input": pega("input_tokens", "promptTokenCount", "inputTokens",
-                          "prompt_tokens"),
-            "output": pega("output_tokens", "candidatesTokenCount",
-                           "outputTokens", "completion_tokens"),
-            "cache_read": pega("cached_content_token_count",
+    return {"input": pega("total_input_tokens", "input_tokens",
+                          "promptTokenCount", "inputTokens", "prompt_tokens"),
+            "output": pega("total_output_tokens", "output_tokens",
+                           "candidatesTokenCount", "outputTokens",
+                           "completion_tokens"),
+            "pensamento": pega("total_thought_tokens", "thoughtsTokenCount"),
+            "cache_read": pega("total_cached_tokens",
+                               "cached_content_token_count",
                                "cachedContentTokenCount"),
             "cache_write": 0}
 
@@ -1887,10 +1896,14 @@ $('#gerar').onclick = async () => {
       $('#barra').classList.remove('oculto');
     }
     const u = r.uso || {}, t = u.triagem;
+    // '?' e nao 0: contagem ausente nao e contagem zerada
+    const tok = x => (x.input == null ? '?' : x.input) + '+' +
+                     (x.output == null ? '?' : x.output) + ' tok';
     $('#uso').textContent = 'modo ' + u.modo + ' \u00b7 ' + u.candidatos +
       ' candidatos \u00b7 ' +
-      (t ? 'triagem ' + t.input + '+' + t.output + ' tok \u00b7 ' : '') +
-      'geracao ' + u.input + '+' + u.output + ' tok';
+      (t ? 'triagem ' + tok(t) + ' \u00b7 ' : '') +
+      'geracao ' + tok(u) +
+      (u.pensamento ? ' (' + u.pensamento + ' de pensamento)' : '');
     $('#uso').classList.remove('oculto');
   } catch (e) { mostrarErro(e.message); }
   finally { btn.disabled = false; btn.textContent = 'Gerar memes'; }
@@ -2525,6 +2538,18 @@ def cmd_enrich(args):
     return 0
 
 
+def _tok(uso):
+    """'27929+286', ou '?' onde a contagem nao veio. Nunca inventa zero."""
+    def n(v):
+        return "?" if v is None else str(v)
+    return "%s+%s" % (n(uso.get("input")), n(uso.get("output")))
+
+
+def _pensamento(uso):
+    p = uso.get("pensamento")
+    return (" (%d de pensamento)" % p) if p else ""
+
+
 def cmd_make(args):
     """Sugere memes na linha de comando.
 
@@ -2547,10 +2572,10 @@ def cmd_make(args):
         for x in s.get("textos", []):
             print("   [%s] %s" % (papeis.get(x["box_id"], x["box_id"]), x["texto"]))
     t = uso.get("triagem")
-    print("\nmodo %s / %d candidatos / %stotal %d+%d tok"
+    print("\nmodo %s / %d candidatos / %stotal %s tok%s"
           % (uso["modo"], uso["candidatos"],
-             ("triagem %d+%d tok / " % (t["input"], t["output"])) if t else "",
-             uso["input"], uso["output"]))
+             ("triagem %s tok / " % _tok(t)) if t else "",
+             _tok(uso), _pensamento(uso)))
     print("para ver as imagens: %s serve" % os.path.basename(sys.argv[0]))
     return 0
 
