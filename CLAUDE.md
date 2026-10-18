@@ -194,7 +194,15 @@ limite, só se paga o que se usa; a mesma folga do Gemini em `medium`); a
 resposta cortada por `max_tokens` e a resposta sem texto agora dizem a causa, com
 `stop_reason` e a contagem de pensamento; o `--debug` imprime `stop_reason`,
 saída e pensamento. O enriquecimento em lote (2000) não mudou: foi medido,
-836 de 836. Não mexi em `effort`: Haiku 4.5, o padrão de triagem no código,
+836 de 836.
+
+**Medido na página, já com o conserto:** triagem `48+1121 tok` (de novo a 379 do
+teto antigo de 1500, depois dos 1467 da sonda) e geração `47+857 tok`, **433 de
+pensamento** no `opus-5-5` em `medium` — longe dos 4000 antigos. O `48` e o `47`
+de entrada não contam o cache de prompt (o catálogo da triagem sai quase todo de
+lá); não é a contagem zerada de antes. Na mesma captura: o botão **Copiar**
+habilitado prova contexto seguro (HTTPS do Cloudflare); **Compartilhar** cinza é
+esperado no Linux desktop e só se testa no celular. Não mexi em `effort`: Haiku 4.5, o padrão de triagem no código,
 rejeita o parâmetro, então um botão de esforço precisaria de guarda por modelo.
 
 O `memegen-sync.timer` já está instalado e habilitado na VM: roda `sync` e
@@ -205,13 +213,11 @@ gastar cota.
 
 ## Em aberto
 
-1. **Comparar a qualidade entre os modelos de geração.** O `3.5-flash-lite` já
-   entregou resultado bom, e é o que roda na VM hoje. Vale medir se o
-   `3.8-flash` compensa as 20 requisições diárias, ou se o lite basta e libera
-   500/dia. Com o lite na VM e o padrão no laptop, dá para comparar sem gastar
-   cota em dobro.
-2. **Bug no modo `full`:** `400: Request contains an invalid argument` no
-   Gemini. O enriquecimento fez 494 chamadas sem um 400, então é específico
+1. **Comparar `opus-5-5` e `sonnet-5-5` na geração** (custo, tempo, qualidade),
+   agora que a VM roda no Claude. A comparação antiga entre `3.8-flash` e o lite
+   do Gemini ficou obsoleta com a troca de provedor.
+2. **Bug no modo `full` (era do Gemini; não testado no Claude):**
+   `400: Request contains an invalid argument` no Gemini. O enriquecimento fez 494 chamadas sem um 400, então é específico
    desse modo — suspeita de tamanho (manda ~220 KB de contratos no
    `system_instruction`) ou complexidade do schema. Precisa de cota para
    reproduzir.
@@ -224,11 +230,16 @@ gastar cota.
    com backoff estoura e troca o "429, cota excedida" por um 524 confuso. Se
    encostar, a saída é `/api/gerar` responder na hora e o resultado ser
    consultado depois.
-5. **Geração em `opus-5-5` ainda sem medição**: a triagem foi medida e
-   corrigida, a geração (teto 4000 + folga) ainda não rodou de verdade. A
-   triagem em `haiku-5-5` pensa ~1155 tokens num trabalho de classificação; um
-   botão de esforço por etapa baixaria isso, mas exige guarda por modelo.
-6. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
+5. **Esforço por etapa.** A triagem em `haiku-5-5` pensa ~1100 tokens num
+   trabalho de classificação; um botão de `effort` baixaria isso, mas exige
+   guarda por modelo (Haiku 4.5, o padrão no código, rejeita o parâmetro). Só
+   vale depois de decidir se o custo/tempo da triagem incomoda.
+6. **Template com texto já impresso na imagem.** No "How About No Bear" a
+   legenda nova cai por cima de um "HOW ABOUT NO" que vem na própria imagem do
+   9GAG. Não se sabe se o editor deles mostra o mesmo. Ideia, não bug
+   confirmado: um campo no contrato (a imagem já traz texto?) para a geração
+   não escrever por cima.
+7. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
 ## Ferramenta de diagnóstico
