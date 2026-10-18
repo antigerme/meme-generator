@@ -541,6 +541,14 @@ def _e_temporario(codigo, detalhe):
 # so o tamanho da resposta truncaria o resultado no meio.
 FOLGA_PENSAMENTO = {"low": 4000, "medium": 12000, "high": 32000}
 
+# No Claude o pensamento sai do MESMO max_tokens da resposta, e nos modelos 5.5
+# ele vem ligado por padrao. Medido na VM: a triagem em haiku-5-5 gastou 1155
+# tokens so pensando e fechou com 1467 de um teto de 1500 -- 33 de margem. Uma
+# chamada que pensasse um pouco mais ficava sem bloco de texto, e a tela dizia
+# "nao devolveu JSON valido:" seguido de nada. O teto so limita, so se paga o
+# que se usa; por isso a folga e generosa (a mesma do Gemini em `medium`).
+FOLGA_PENSAMENTO_CLAUDE = 12000
+
 # Quantas vezes insistir num 429. Um so, de proposito: as mensagens do Google
 # NAO distinguem limite por minuto de cota diaria esgotada -- a de cota diaria
 # de 500 tambem dizia "Please retry in 20.8s", e as duas trazem
@@ -725,14 +733,19 @@ def gerar_json(sistema, texto, schema, papel, imagem=None, modelo=None,
             if cachear_sistema and i == len(partes) - 1:
                 bloco["cache_control"] = {"type": "ephemeral"}
             blocos_sistema.append(bloco)
+        limite = max_tokens + FOLGA_PENSAMENTO_CLAUDE
         resposta = chamar_api("/v1/messages", {
-            "model": modelo, "max_tokens": max_tokens,
+            "model": modelo, "max_tokens": limite,
             "system": blocos_sistema,
             "messages": [{"role": "user",
                           "content": _blocos_anthropic(texto, imagem)}],
             "output_config": {"format": {"type": "json_schema", "schema": schema}},
         })
         bruto, uso = texto_da_resposta(resposta), _uso(resposta)
+        depurar("  stop_reason=%s, saida=%s tok (pensamento %s), limite=%d",
+                resposta.get("stop_reason"), uso.get("output"),
+                uso.get("pensamento"), limite)
+        _conferir_resposta_claude(papel, resposta, bruto, limite)
 
     try:
         return json.loads(bruto), uso
@@ -1249,8 +1262,34 @@ def _uso(resposta):
     u = resposta.get("usage", {})
     return {"input": u.get("input_tokens", 0),
             "output": u.get("output_tokens", 0),
+            "pensamento": (u.get("output_tokens_details") or {}).get("thinking_tokens"),
             "cache_read": u.get("cache_read_input_tokens", 0) or 0,
             "cache_write": u.get("cache_creation_input_tokens", 0) or 0}
+
+
+def _conferir_resposta_claude(papel, resposta, texto, limite):
+    """Diz a causa quando nao ha JSON para ler.
+
+    Texto vazio tem mais de uma origem: o limite esgotado (o pensamento divide o
+    max_tokens com a resposta) ou uma resposta sem bloco de texto por outro
+    motivo (recusa, por exemplo). Antes as duas viravam "nao devolveu JSON
+    valido:" seguido de nada, e a causa era um palpite.
+    """
+    motivo = resposta.get("stop_reason")
+    uso = _uso(resposta)
+
+    def n(v):
+        return "?" if v is None else v
+
+    if motivo == "max_tokens":
+        raise RuntimeError(
+            "na etapa '%s' a resposta foi cortada pelo limite de %d tokens (saida "
+            "%s, dos quais %s de pensamento). No Claude o pensamento divide o "
+            "limite com a resposta: suba FOLGA_PENSAMENTO_CLAUDE."
+            % (papel, limite, n(uso.get("output")), n(uso.get("pensamento"))))
+    if not texto.strip():
+        raise RuntimeError("na etapa '%s' a resposta veio sem texto (stop_reason=%s)"
+                           % (papel, n(motivo)))
 
 
 def triar(situacao, catalogo, contratos, k=30, modelo=None, nsfw=False):

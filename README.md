@@ -481,7 +481,8 @@ $ MEMEGEN_DEBUG=1 ./memegen.py serve
 
 Imprime em stderr cada chamada ao modelo: a etapa, o modelo, o tamanho da
 carga, o `generation_config` enviado, a tentativa atual, o tempo decorrido e a
-resposta. O base64 das imagens aparece resumido, senão enterraria o resto.
+resposta. No provedor Anthropic imprime o `stop_reason`, a saída e o pensamento em
+tokens e o limite enviado (o corpo da resposta não, para não repetir o prompt). O base64 das imagens aparece resumido, senão enterraria o resto.
 
 Serve para responder "por que está lento" sem adivinhar — mostra se o tempo
 está na triagem ou na geração, se o retry está rodando, e o que de fato foi

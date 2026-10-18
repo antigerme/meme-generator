@@ -176,9 +176,26 @@ terminou em menos de 15 min (medido uma vez; a API só garante até 24 h).
 
 Medido no mesmo episódio: o enriquecimento com `claude-sonnet-5-5` e
 `max_tokens` 2000 voltou **836 de 836 válidos**, 0 com erro. Isso aposenta o
-risco de truncamento só no enriquecimento. Triagem em `haiku-5-5` (1500) e
-geração em `opus-5-5` (4000) seguem **sem medição**: nesses modelos o
-pensamento vem ligado por padrão e, no Claude, sai do mesmo `max_tokens`.
+risco de truncamento só no enriquecimento.
+
+**A triagem em `haiku-5-5` estourava o teto, e a primeira geração real falhou.**
+A tela disse `na etapa 'triar', o modelo nao devolveu JSON valido:` com nada
+depois dos dois pontos. No Claude o pensamento sai do mesmo `max_tokens` da
+resposta, e nos modelos 5.5 ele vem ligado por padrão (Haiku 5.5 e Opus 5.5 em
+esforço `medium`, Sonnet 5.5 em `high`; confirmado na página de modelos da
+Anthropic). Uma sonda na VM chamou a triagem uma vez e **passou, por 33
+tokens**: `output_tokens` 1467 de um teto de 1500, dos quais 1155 só de
+pensamento (resposta de 643 caracteres). O pensamento varia entre chamadas, então
+uma que pense um pouco mais fica sem bloco de texto. Não capturei a resposta da
+falha da tela: é forte evidência, não prova da causa daquela chamada.
+
+Conserto: o teto enviado ao Claude ganha `FOLGA_PENSAMENTO_CLAUDE` (12000, só
+limite, só se paga o que se usa; a mesma folga do Gemini em `medium`); a
+resposta cortada por `max_tokens` e a resposta sem texto agora dizem a causa, com
+`stop_reason` e a contagem de pensamento; o `--debug` imprime `stop_reason`,
+saída e pensamento. O enriquecimento em lote (2000) não mudou: foi medido,
+836 de 836. Não mexi em `effort`: Haiku 4.5, o padrão de triagem no código,
+rejeita o parâmetro, então um botão de esforço precisaria de guarda por modelo.
 
 O `memegen-sync.timer` já está instalado e habilitado na VM: roda `sync` e
 depois `enrich --pausa 6` uma vez por dia, com `Persistent=true` para não
@@ -207,9 +224,10 @@ gastar cota.
    com backoff estoura e troca o "429, cota excedida" por um 524 confuso. Se
    encostar, a saída é `/api/gerar` responder na hora e o resultado ser
    consultado depois.
-5. **`--debug` no caminho Anthropic só imprime tempo**, não `stop_reason` nem
-   uso (o do Gemini imprime a resposta inteira). Um JSON truncado por
-   `max_tokens` não se explica sozinho. Próximo conserto, em commit à parte.
+5. **Geração em `opus-5-5` ainda sem medição**: a triagem foi medida e
+   corrigida, a geração (teto 4000 + folga) ainda não rodou de verdade. A
+   triagem em `haiku-5-5` pensa ~1155 tokens num trabalho de classificação; um
+   botão de esforço por etapa baixaria isso, mas exige guarda por modelo.
 6. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 

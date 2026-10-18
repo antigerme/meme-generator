@@ -784,6 +784,91 @@ class TestLoteAssincrono(Base):
         self.assertEqual(M.cmd_enrich(self._args(dry_run=True)), 0)
 
 
+class TestClaudeResposta(Base):
+    """Tela: "na etapa 'triar', o modelo nao devolveu JSON valido:" e nada depois.
+
+    Na VM, a triagem em haiku-5-5 gastou 1155 tokens so pensando e fechou com
+    1467 de um teto de 1500. No Claude o pensamento divide o max_tokens com a
+    resposta; sem bloco de texto, o erro nao dizia a causa.
+    """
+
+    def setUp(self):
+        Base.setUp(self)
+        self._amb = dict((k, os.environ.get(k)) for k in
+                         ("MEMEGEN_PROVIDER", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"))
+        os.environ["MEMEGEN_PROVIDER"] = "anthropic"
+        os.environ["ANTHROPIC_API_KEY"] = "sk-teste"
+        os.environ.pop("GEMINI_API_KEY", None)
+        self._chamar = M.chamar_api
+        self.cargas = []
+
+    def tearDown(self):
+        M.chamar_api = self._chamar
+        for k, v in self._amb.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def _responde(self, resposta):
+        def falsa(caminho, carga=None, metodo=None, timeout=300):
+            self.cargas.append(carga)
+            return resposta
+        M.chamar_api = falsa
+
+    def _triar(self):
+        return M.gerar_json("s", "t", M.ESQUEMA_TRIAGEM, "triar", max_tokens=1500)
+
+    def test_teto_enviado_deixa_folga_para_o_pensamento(self):
+        """Numero fixo de proposito: comparar com a propria constante seria
+        tautologia (zerar a constante zeraria os dois lados). Medido: a triagem
+        pensou 1155 tokens; a folga tem de ser bem maior que isso."""
+        self._responde(_msg({"ids": ["drake"]}))
+        self._triar()
+        self.assertGreaterEqual(self.cargas[0]["max_tokens"] - 1500, 4000)
+
+    def test_pensamento_vazio_antes_do_texto_nao_atrapalha(self):
+        """O formato real medido na VM: [thinking (0 chars), text]."""
+        self._responde({"stop_reason": "end_turn",
+                        "usage": {"input_tokens": 48, "output_tokens": 1467,
+                                  "output_tokens_details": {"thinking_tokens": 1155}},
+                        "content": [{"type": "thinking", "thinking": ""},
+                                    {"type": "text", "text": json.dumps({"ids": ["drake"]})}]})
+        dados, uso = self._triar()
+        self.assertEqual(dados, {"ids": ["drake"]})
+        self.assertEqual(uso["pensamento"], 1155)
+
+    def test_corte_so_com_pensamento_diz_a_causa_e_nao_json_invalido(self):
+        self._responde({"stop_reason": "max_tokens",
+                        "usage": {"input_tokens": 48, "output_tokens": 13500,
+                                  "output_tokens_details": {"thinking_tokens": 13500}},
+                        "content": [{"type": "thinking", "thinking": ""}]})
+        with self.assertRaises(RuntimeError) as ctx:
+            self._triar()
+        msg = str(ctx.exception)
+        self.assertIn("cortada pelo limite de %d" % (1500 + M.FOLGA_PENSAMENTO_CLAUDE), msg)
+        self.assertIn("13500 de pensamento", msg)
+        self.assertNotIn("nao devolveu JSON valido", msg)
+
+    def test_corte_com_texto_parcial_tambem_diz_a_causa(self):
+        self._responde({"stop_reason": "max_tokens", "usage": {"output_tokens": 99},
+                        "content": [{"type": "text", "text": '{"ids": ["dra'}]})
+        with self.assertRaises(RuntimeError) as ctx:
+            self._triar()
+        self.assertIn("cortada", str(ctx.exception))
+
+    def test_sem_texto_por_outro_motivo_diz_o_stop_reason(self):
+        self._responde({"stop_reason": "refusal", "content": []})
+        with self.assertRaises(RuntimeError) as ctx:
+            self._triar()
+        self.assertIn("sem texto", str(ctx.exception))
+        self.assertIn("refusal", str(ctx.exception))
+
+    def test_contagem_sem_detalhe_de_pensamento_e_none(self):
+        self.assertIsNone(M._uso({"usage": {"input_tokens": 5, "output_tokens": 7}})["pensamento"])
+
+
 class TestPortabilidade(unittest.TestCase):
 
     def test_so_usa_biblioteca_padrao(self):
