@@ -113,10 +113,14 @@ para que serve, quando usar e o papel de cada caixa.
 
 Dois modos de seleção:
 
-| Modo | Custo/meme (Opus 5) |
+| Modo | Custo/meme (estimativa feita com Opus 5) |
 |---|---:|
 | `shortlist` — um modelo barato peneira antes | US$ 0,060 |
 | `full` — catálogo inteiro (92 mil tokens) no contexto | US$ 0,483 |
+
+O modelo padrão de geração agora é o Opus 5.5, que custa 20% menos por token
+(US$ 4 / 20 por milhão, contra 5 / 25 do Opus 5). A estimativa acima não foi
+refeita: o pensamento também mudou (esforço padrão `medium`).
 
 ### Usando do celular
 
@@ -439,8 +443,9 @@ enriquece uma vez e gera alguns memes por dia, a cota gratuita costuma bastar.
 |---|---|---|
 | Enriquecer os 836 | Batch API, < 15 min (medido uma vez; até 24 h garantido), US$ 0,84 (estimativa) | sequencial, mais lento, dentro da cota |
 | Endpoint | `/v1/messages` | `/v1beta/interactions` |
-| Padrão enriquecer | `claude-sonnet-5` | `gemini-3.5-flash-lite` |
-| Padrão gerar | `claude-opus-5` | `gemini-3.8-flash` |
+| Padrão enriquecer | `claude-sonnet-5-5` | `gemini-3.5-flash-lite` |
+| Padrão triar | `claude-haiku-5-5` | `gemini-3.5-flash-lite` |
+| Padrão gerar | `claude-opus-5-5` | `gemini-3.8-flash` |
 
 Só um enriquecimento roda por vez: uma trava em `dados/enrich.lock` recusa a
 segunda execução. Dois em paralelo gastam cota em duplicata e um sobrescreve os

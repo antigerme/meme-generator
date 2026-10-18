@@ -112,7 +112,8 @@ systemd faz o serviço subir sozinho no boot.
   (chave da Anthropic e os três `MEMEGEN_*_MODEL` apontando para a geração 5.5:
   enriquecer `claude-sonnet-5-5`, triar `claude-haiku-5-5`, gerar
   `claude-opus-5-5`). As linhas do Gemini ficaram comentadas. Os padrões dentro
-  do código (`PADROES`) continuam uma geração atrás e só valem sem as variáveis
+  do código (`PADROES`) também apontam para a geração 5.5 desde 18/10; as
+  variáveis da VM continuam e valem sobre eles
 - `memegen.felicio.com.br`, **sem autenticação**, por decisão dele — a VM fica
   desligada fora dos testes, o que limita a janela
 - (Até 17/10 a geração na VM usava `gemini-3.5-flash-lite`, 500/dia em vez das 20
@@ -194,7 +195,10 @@ limite, só se paga o que se usa; a mesma folga do Gemini em `medium`); a
 resposta cortada por `max_tokens` e a resposta sem texto agora dizem a causa, com
 `stop_reason` e a contagem de pensamento; o `--debug` imprime `stop_reason`,
 saída e pensamento. O enriquecimento em lote (2000) não mudou: foi medido,
-836 de 836.
+836 de 836. Não mexi em `effort`: o padrão de triagem agora é o Haiku 5.5, que
+aceita o parâmetro, mas um modelo mais antigo posto numa variável de ambiente
+(Haiku 4.5, por exemplo) o rejeita, então um botão de esforço ainda precisaria
+de guarda por modelo.
 
 **Medido na página, já com o conserto:** triagem `48+1121 tok` (de novo a 379 do
 teto antigo de 1500, depois dos 1467 da sonda) e geração `47+857 tok`, **433 de
@@ -202,8 +206,7 @@ pensamento** no `opus-5-5` em `medium` — longe dos 4000 antigos. O `48` e o `4
 de entrada não contam o cache de prompt (o catálogo da triagem sai quase todo de
 lá); não é a contagem zerada de antes. Na mesma captura: o botão **Copiar**
 habilitado prova contexto seguro (HTTPS do Cloudflare); **Compartilhar** cinza é
-esperado no Linux desktop e só se testa no celular. Não mexi em `effort`: Haiku 4.5, o padrão de triagem no código,
-rejeita o parâmetro, então um botão de esforço precisaria de guarda por modelo.
+esperado no Linux desktop e só se testa no celular.
 
 O `memegen-sync.timer` já está instalado e habilitado na VM: roda `sync` e
 depois `enrich --pausa 6` uma vez por dia, com `Persistent=true` para não
@@ -232,7 +235,8 @@ gastar cota.
    consultado depois.
 5. **Esforço por etapa.** A triagem em `haiku-5-5` pensa ~1100 tokens num
    trabalho de classificação; um botão de `effort` baixaria isso, mas exige
-   guarda por modelo (Haiku 4.5, o padrão no código, rejeita o parâmetro). Só
+   guarda por modelo (Haiku 4.5, que ainda se pode pôr numa variável de ambiente,
+   rejeita o parâmetro; os padrões do código já são 5.5). Só
    vale depois de decidir se o custo/tempo da triagem incomoda.
 6. **Template com texto já impresso na imagem.** No "How About No Bear" a
    legenda nova cai por cima de um "HOW ABOUT NO" que vem na própria imagem do

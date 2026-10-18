@@ -79,9 +79,12 @@ VERSAO_API = "2023-06-01"
 API_GEMINI = os.environ.get("GEMINI_BASE_URL",
                             "https://generativelanguage.googleapis.com")
 
+# IDs exatos da pagina de modelos da Anthropic. Subir de geracao muda
+# comportamento, nao so o nome: pensamento ligado por padrao, esforco padrao
+# diferente por modelo (ver FOLGA_PENSAMENTO_CLAUDE e o CLAUDE.md).
 PADROES = {
-    "anthropic": {"enriquecer": "claude-sonnet-5", "gerar": "claude-opus-5",
-                  "triar": "claude-haiku-4-5"},
+    "anthropic": {"enriquecer": "claude-sonnet-5-5", "gerar": "claude-opus-5-5",
+                  "triar": "claude-haiku-5-5"},
     "gemini": {"enriquecer": "gemini-3.5-flash-lite", "gerar": "gemini-3.8-flash",
                "triar": "gemini-3.5-flash-lite"},
 }

@@ -964,7 +964,8 @@ class TestProvedor(Base):
         Base.setUp(self)
         self._antes = dict((k, os.environ.get(k)) for k in
                            ("ANTHROPIC_API_KEY", "GEMINI_API_KEY",
-                            "MEMEGEN_PROVIDER", "MEMEGEN_ENRICH_MODEL"))
+                            "MEMEGEN_PROVIDER", "MEMEGEN_ENRICH_MODEL",
+                            "MEMEGEN_GENERATE_MODEL", "MEMEGEN_TRIAGE_MODEL"))
         for k in self._antes:
             os.environ.pop(k, None)
 
@@ -982,6 +983,25 @@ class TestProvedor(Base):
         os.environ["ANTHROPIC_API_KEY"] = "a"
         # com as duas, anthropic e o padrao
         self.assertEqual(M.provedor(), "anthropic")
+
+    def test_padroes_dos_dois_provedores(self):
+        """IDs fixados de proposito: um typo so apareceria como 404 na VM, na
+        primeira chamada. Os do Claude vem da pagina de modelos da Anthropic; ao
+        subir de geracao este teste muda de proposito, junto com o README."""
+        os.environ["ANTHROPIC_API_KEY"] = "a"
+        self.assertEqual(M.modelo_padrao("enriquecer"), "claude-sonnet-5-5")
+        self.assertEqual(M.modelo_padrao("gerar"), "claude-opus-5-5")
+        self.assertEqual(M.modelo_padrao("triar"), "claude-haiku-5-5")
+        os.environ.pop("ANTHROPIC_API_KEY")
+        os.environ["GEMINI_API_KEY"] = "g"
+        self.assertEqual(M.modelo_padrao("enriquecer"), "gemini-3.5-flash-lite")
+        self.assertEqual(M.modelo_padrao("gerar"), "gemini-3.8-flash")
+        self.assertEqual(M.modelo_padrao("triar"), "gemini-3.5-flash-lite")
+
+    def test_variavel_de_modelo_ganha_do_padrao(self):
+        os.environ["ANTHROPIC_API_KEY"] = "a"
+        os.environ["MEMEGEN_TRIAGE_MODEL"] = "claude-haiku-4-5"
+        self.assertEqual(M.modelo_padrao("triar"), "claude-haiku-4-5")
 
     def test_variavel_desempata(self):
         os.environ["ANTHROPIC_API_KEY"] = "a"
