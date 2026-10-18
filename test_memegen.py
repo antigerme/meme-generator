@@ -573,6 +573,19 @@ class TestServidor(Base):
 
 # ----------------------------------------------------------------------- TLS
 
+class TestFilaDeConexoes(unittest.TestCase):
+    """Medido (30, 150 e 400 conexoes novas de uma vez, 836 imagens): com a fila
+    padrao de 5, ate 30 conexoes ja davam um pedido de 1,2 s e 150 davam p95 de
+    1,23 s (o SYN descartado e retransmitido); com 128, p95 de 0,09 s. Nao ha teto
+    de threads para subir: o ThreadingMixIn cria uma por conexao."""
+
+    def test_fila_nao_e_a_padrao_de_5(self):
+        self.assertGreaterEqual(M.Servidor.request_queue_size, 64)
+
+    def test_continua_sem_teto_de_threads(self):
+        self.assertTrue(issubclass(M.Servidor, M.socketserver.ThreadingMixIn))
+
+
 class TestTLS(Base):
     """navigator.share e navigator.clipboard exigem contexto seguro. Do
     celular o servidor e alcancado pelo IP da rede, que em HTTP nao e seguro."""

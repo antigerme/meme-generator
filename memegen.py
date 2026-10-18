@@ -2531,6 +2531,10 @@ class Servidor(socketserver.ThreadingMixIn, http.server.HTTPServer):
     # ThreadingHTTPServer so existe a partir do 3.7
     daemon_threads = True
     allow_reuse_address = True
+    # Fila de conexoes ja chegadas e ainda nao aceitas (o backlog do listen). O
+    # padrao do socketserver e 5, e a grade de templates pede dezenas de imagens de
+    # uma vez. Nao ha teto de threads: o ThreadingMixIn cria uma por conexao.
+    request_queue_size = 128
 
 
 def servir(host="127.0.0.1", porta=8000, https=False):
