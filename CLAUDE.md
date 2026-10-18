@@ -108,11 +108,15 @@ systemd faz o serviço subir sozinho no boot.
 
 - `/opt/memegen`, código e `dados/`, dono `opc`. Ele recusou usuário de sistema;
   `NoNewPrivileges=yes` fecha a escalada por sudo que o `opc` tem sem senha
-- `/etc/memegen.env` 0600 root, com a chave e `MEMEGEN_PROVIDER=gemini`
+- `/etc/memegen.env` 0600 root. **Desde 18/10 a VM roda no provedor Anthropic**
+  (chave da Anthropic e os três `MEMEGEN_*_MODEL` apontando para a geração 5.5:
+  enriquecer `claude-sonnet-5-5`, triar `claude-haiku-5-5`, gerar
+  `claude-opus-5-5`). As linhas do Gemini ficaram comentadas. Os padrões dentro
+  do código (`PADROES`) continuam uma geração atrás e só valem sem as variáveis
 - `memegen.felicio.com.br`, **sem autenticação**, por decisão dele — a VM fica
   desligada fora dos testes, o que limita a janela
-- Geração com `MEMEGEN_GENERATE_MODEL=gemini-3.5-flash-lite` nessa VM: 500/dia
-  em vez das 20 do `3.8-flash`, o que permite testar à vontade
+- (Até 17/10 a geração na VM usava `gemini-3.5-flash-lite`, 500/dia em vez das 20
+  do `3.8-flash`.)
 - **Validado de ponta a ponta no ar:** ele abriu o domínio e gerou memes. Toda
   a corrente — Cloudflare, Apache, serviço, triagem, geração, canvas —
   funcionando junta
@@ -139,6 +143,25 @@ saída de teste por pipe.
 
 O cache em memória compara o mtime de `catalogo.json` e `contratos.json` a cada
 leitura, então `sync` e `enrich` não exigem restart do serviço.
+
+**18/10: apagaram `dados/` e o timer só recriou metade.** Catálogo e imagens
+voltaram, e o `enrich` enviou um lote de 836 na Batch API (Anthropic) e saiu. Os
+contratos só entram com `enrich --collect`, e o id do lote só existia no
+journal: a rodada seguinte, com contratos ainda vazios, reenviaria os 836 e
+cobraria em dobro. Corrigido: o id vai para `dados/lote.json` ao enviar, e todo
+`enrich` começa por ele (andando: não envia; terminado: coleta; 404: descarta
+dizendo que descartou; qualquer outro erro sobe, porque na dúvida não se
+reenvia). O contrato entra na próxima rodada do `enrich` **depois** de o lote
+terminar, não quando ele termina: com timer diário e VM desligada, pode ser o dia
+seguinte. A página avisa isso em vez de dizer "quando terminar". A coleta usa o hash do momento do **envio**, não o de agora: coletado
+um dia depois, o template pode ter mudado ou sumido. Limite conhecido: `rm -rf
+dados/*` leva o `lote.json` junto.
+
+Medido no mesmo episódio: o enriquecimento com `claude-sonnet-5-5` e
+`max_tokens` 2000 voltou **836 de 836 válidos**, 0 com erro. Isso aposenta o
+risco de truncamento só no enriquecimento. Triagem em `haiku-5-5` (1500) e
+geração em `opus-5-5` (4000) seguem **sem medição**: nesses modelos o
+pensamento vem ligado por padrão e, no Claude, sai do mesmo `max_tokens`.
 
 O `memegen-sync.timer` já está instalado e habilitado na VM: roda `sync` e
 depois `enrich --pausa 6` uma vez por dia, com `Persistent=true` para não
@@ -167,7 +190,10 @@ gastar cota.
    com backoff estoura e troca o "429, cota excedida" por um 524 confuso. Se
    encostar, a saída é `/api/gerar` responder na hora e o resultado ser
    consultado depois.
-5. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
+5. **`--debug` no caminho Anthropic só imprime tempo**, não `stop_reason` nem
+   uso (o do Gemini imprime a resposta inteira). Um JSON truncado por
+   `max_tokens` não se explica sozinho. Próximo conserto, em commit à parte.
+6. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
 ## Ferramenta de diagnóstico

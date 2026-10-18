@@ -85,6 +85,18 @@ do 9GAG e a posição de cada caixa, e recebe um contrato em português:
 Roda pela Batch API (metade do preço) e é incremental — quando o 9GAG publica 20
 memes novos, você enriquece 20.
 
+A Batch API é assíncrona, então no provedor Anthropic o `enrich` tem duas
+etapas: **envia** o lote e, numa execução seguinte, **coleta** o resultado. O id
+do lote fica em `dados/lote.json`, e o `status` mostra o lote em andamento. Cada
+execução de `enrich` começa por ele: lote andando, não envia nada; lote
+terminado, coleta e grava os contratos; o que sobrou de erro ou expiração vai num
+lote novo. O contrato **não** entra quando o lote termina, e sim na próxima
+rodada do `enrich` depois disso. Para não esperar o timer, rode
+`sudo systemctl start memegen-sync.service` assim que o lote terminar (ou
+`enrich --wait` no momento do envio, ou `enrich --collect LOTE`).
+
+O Gemini não tem API de lote: o `enrich` é sequencial e fecha numa execução só.
+
 ### serve — a interface
 
 Duas abas. **Gerar** recebe a situação e devolve os memes renderizados, com um
@@ -343,6 +355,18 @@ Nada disso exige reiniciar o `memegen`. O cache em memória compara o mtime de
 Custo de uma rodada sem novidade: 12 KB para descobrir que o bundle não mudou,
 e o `enrich` sai na hora por não ter pendente. O `enrich.lock` impede que o
 timer atropele uma execução manual.
+
+Com o provedor Anthropic o timer fecha o ciclo em duas rodadas: numa envia o
+lote, na seguinte coleta (ver `enrich`, acima). Entre as duas, os "0 contratos"
+na página são esperados. O aviso da página diz que há um lote enviado e que os
+contratos entram na próxima rodada do `enrich` depois que ele terminar. Com a VM
+desligada fora dos testes, essa rodada pode ser a do dia seguinte.
+
+**Apagar `dados/` refaz tudo e cobra por isso.** O timer recria catálogo e
+imagens e envia os 836 num lote novo, pago. E o `rm` leva junto o
+`lote.json`: se havia um lote em andamento, ele fica órfão (ainda cobrado) e a
+rodada seguinte envia outro. Coletar um lote órfão ainda é possível pelo id que
+aparece no journal: `enrich --collect LOTE`.
 
 ```console
 $ sudo systemctl daemon-reload

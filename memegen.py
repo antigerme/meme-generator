@@ -63,6 +63,9 @@ CATALOGO = os.path.join(DADOS, "catalogo.json")
 CONTRATOS = os.path.join(DADOS, "contratos.json")
 ESTADO = os.path.join(DADOS, "estado.json")
 TRAVA = os.path.join(DADOS, "enrich.lock")
+# Lote da Batch API enviado e ainda nao coletado. Sem o id em disco, o
+# proximo `enrich` nao sabe que ha lote e reenvia tudo.
+LOTE = os.path.join(DADOS, "lote.json")
 CERT = os.path.join(DADOS, "cert.pem")
 CHAVE = os.path.join(DADOS, "key.pem")
 
@@ -390,6 +393,18 @@ def _cabecalhos_api():
     return cab
 
 
+class ErroAPI(RuntimeError):
+    """Erro HTTP da API da Anthropic, com o codigo guardado a parte.
+
+    Quem precisa distinguir "nao existe" (404) de "nao consegui falar" (5xx,
+    chave recusada) nao deve fazer isso lendo o texto da mensagem.
+    """
+
+    def __init__(self, mensagem, codigo=None):
+        RuntimeError.__init__(self, mensagem)
+        self.codigo = codigo
+
+
 def chamar_api(caminho, carga=None, metodo=None, timeout=300):
     """Chamada a API da Anthropic. Levanta com o corpo do erro, que e onde a
     mensagem util fica - o HTTPError sozinho so diz '400 Bad Request'."""
@@ -427,7 +442,7 @@ def chamar_api(caminho, carga=None, metodo=None, timeout=300):
                         "  1. defina ANTHROPIC_WORKSPACE_ID com o id do workspace\n"
                         "     (Console > Settings > Workspaces, comeca com wrkspc_)\n"
                         "  2. ou crie uma chave ja escopada a um workspace")
-        raise RuntimeError("API respondeu %s: %s" % (e.code, detalhe))
+        raise ErroAPI("API respondeu %s: %s" % (e.code, detalhe), e.code)
 
 
 def texto_da_resposta(mensagem):
@@ -923,6 +938,10 @@ def enviar_lote(catalogo, ids, modelo=None):
     if not requisicoes:
         raise RuntimeError("nenhum template com imagem disponivel para enriquecer")
     lote = chamar_api("/v1/messages/batches", {"requests": requisicoes})
+    # o id vai para o disco antes de qualquer outra coisa que possa falhar
+    hashes = dict((r["custom_id"], catalogo[r["custom_id"]]["_hash"])
+                  for r in requisicoes)
+    gravar_json(LOTE, {"id": lote["id"], "enviado": agora(), "hashes": hashes})
     print("lote %s criado com %d templates (%s)"
           % (lote["id"], len(requisicoes), modelo))
     return lote["id"]
@@ -1008,8 +1027,14 @@ def enriquecer_sequencial(catalogo, ids, modelo=None, pausa=1.0):
     return novos
 
 
-def coletar_lote(lote_id, catalogo, intervalo=30):
-    """Aguarda o lote e grava os contratos. Devolve so os novos."""
+def coletar_lote(lote_id, catalogo, intervalo=30, hashes=None):
+    """Aguarda o lote e grava os contratos. Devolve so os novos.
+
+    `hashes` e o hash de cada template NO MOMENTO DO ENVIO. Coletado um dia
+    depois (o timer envia num dia e coleta no seguinte), o template pode ter
+    mudado ou sumido do catalogo nesse meio tempo. Gravar o hash de agora
+    marcaria como em dia um contrato escrito sobre o conteudo antigo.
+    """
     while True:
         lote = chamar_api("/v1/messages/batches/" + lote_id)
         if lote.get("processing_status") == "ended":
@@ -1035,6 +1060,9 @@ def coletar_lote(lote_id, catalogo, intervalo=30):
             continue
         item = json.loads(linha)
         tid = item.get("custom_id")
+        if tid not in catalogo:
+            print("  %s: saiu do catalogo desde o envio, ignorado" % tid)
+            continue
         resultado = item.get("result", {})
         if resultado.get("type") != "succeeded":
             erros += 1
@@ -1046,7 +1074,7 @@ def coletar_lote(lote_id, catalogo, intervalo=30):
             erros += 1
             print("  %s: resposta invalida" % tid)
             continue
-        dados["source_hash"] = catalogo[tid]["_hash"]
+        dados["source_hash"] = (hashes or {}).get(tid) or catalogo[tid]["_hash"]
         dados["enriched_at"] = agora()
         dados["model"] = resultado["message"].get("model")
         contratos[tid] = dados
@@ -1055,6 +1083,58 @@ def coletar_lote(lote_id, catalogo, intervalo=30):
     gravar_json(CONTRATOS, contratos)
     print("contratos gravados: %d ok, %d com erro" % (len(novos), erros))
     return novos
+
+
+def _hashes_do_lote(lote_id):
+    reg = ler_json(LOTE, None)
+    if reg and reg.get("id") == lote_id:
+        return reg.get("hashes")
+    return None
+
+
+def _esquecer_lote(lote_id):
+    """Apaga o registro, mas so se for o lote em questao."""
+    reg = ler_json(LOTE, None)
+    if reg and reg.get("id") == lote_id:
+        try:
+            os.remove(LOTE)                 # sem missing_ok: so existe no 3.8
+        except OSError:
+            pass
+
+
+def tratar_lote_anterior(catalogo):
+    """Resolve o lote enviado por uma execucao anterior. True = ainda andando.
+
+    Em andamento: avisa e devolve True, para o chamador nao enviar nada.
+    Terminado: coleta, apaga o registro e devolve False -- o que sobrou de
+    erro ou expiracao vai num lote novo, no maximo um reenvio por execucao.
+    404: o lote nao existe mais na API; descarta o registro, dizendo que
+    descartou. Qualquer outro erro (rede, 5xx, chave) sobe: na duvida nao se
+    reenvia, e o servico falha de forma visivel.
+    """
+    reg = ler_json(LOTE, None)
+    if not reg or not reg.get("id"):
+        return False
+    lote_id = reg["id"]
+    try:
+        lote = chamar_api("/v1/messages/batches/" + lote_id)
+    except ErroAPI as e:
+        if e.codigo != 404:
+            raise
+        print("lote %s nao existe mais na API (expirou?); descartando o registro"
+              % lote_id)
+        _esquecer_lote(lote_id)
+        return False
+    if lote.get("processing_status") != "ended":
+        c = lote.get("request_counts", {})
+        print("lote %s ainda em andamento (enviado em %s): %s prontos, %s na fila."
+              " Nada novo foi enviado." % (lote_id, reg.get("enviado", "?"),
+                                           c.get("succeeded"), c.get("processing")))
+        return True
+    print("lote %s terminou; coletando" % lote_id)
+    coletar_lote(lote_id, catalogo, hashes=reg.get("hashes"))
+    _esquecer_lote(lote_id)
+    return False
 
 
 # -------------------------------------------------------------------- geracao
@@ -2291,8 +2371,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         estado = ler_json(ESTADO, {})
         pendentes = contratos_pendentes(catalogo, contratos) if catalogo else []
         aviso = None
+        lote = ler_json(LOTE, None)
         if not catalogo:
             aviso = "Catalogo vazio. Rode `sync`."
+        elif lote and (not contratos or pendentes):
+            # os contratos NAO entram quando o lote termina, e sim na proxima rodada
+            # do enrich depois disso (com timer diario, pode ser um dia depois)
+            aviso = ("Lote de enriquecimento enviado em %s, ainda sem contratos. "
+                     "Eles entram na proxima rodada do `enrich` depois que o lote "
+                     "terminar na Anthropic." % lote.get("enviado", "?"))
         elif not contratos:
             aviso = "Nenhum contrato. Rode `enrich` - sem isso a escolha nao funciona."
         elif pendentes:
@@ -2495,7 +2582,15 @@ def cmd_enrich(args):
         print("catalogo vazio - rode `sync` primeiro", file=sys.stderr)
         return 1
     if args.collect:
-        coletar_lote(args.collect, catalogo)
+        coletar_lote(args.collect, catalogo,
+                     hashes=_hashes_do_lote(args.collect))
+        _esquecer_lote(args.collect)
+        return 0
+
+    qual = provedor()
+    # Lote de uma execucao anterior, antes de calcular pendentes e baixar
+    # imagem: com contratos ainda vazios, o timer reenviaria tudo a cada rodada.
+    if qual == "anthropic" and not args.dry_run and tratar_lote_anterior(catalogo):
         return 0
 
     pendentes = contratos_pendentes(catalogo, ler_json(CONTRATOS, {}))
@@ -2507,7 +2602,6 @@ def cmd_enrich(args):
         print("todos os contratos estao em dia")
         return 0
 
-    qual = provedor()
     print("%d templates a enriquecer com %s (%s)"
           % (len(pendentes), args.model or modelo_padrao("enriquecer"), qual))
     print("baixando imagens faltantes...")
@@ -2529,11 +2623,16 @@ def cmd_enrich(args):
                                   pausa=args.pausa)
             return 0
 
+        if ler_json(LOTE, None):
+            # outra execucao enviou um lote entre a checagem la de cima e a trava
+            print("ja existe um lote registrado; nada novo foi enviado")
+            return 0
         lote = enviar_lote(catalogo, pendentes, args.model)
         if args.wait:
-            coletar_lote(lote, catalogo)
+            coletar_lote(lote, catalogo, hashes=_hashes_do_lote(lote))
+            _esquecer_lote(lote)
         else:
-            print("\nacompanhe com: %s enrich --collect %s"
+            print("\nQuando o lote terminar, o proximo `enrich` coleta sozinho. Ou, na mao: %s enrich --collect %s"
                   % (os.path.basename(sys.argv[0]), lote))
     return 0
 
@@ -2592,6 +2691,11 @@ def cmd_status(args):
     print("catalogo    : %d templates" % len(catalogo))
     print("contratos   : %d (%d pendentes)" % (len(contratos), len(pendentes)))
     print("imagens     : %d em disco" % imagens)
+    lote = ler_json(LOTE, None)
+    if lote:
+        print("lote        : %s (enviado em %s, %d templates)"
+              % (lote.get("id"), lote.get("enviado", "?"),
+                 len(lote.get("hashes") or {})))
     print("bundle      : %s" % estado.get("templates", "-"))
     print("sincronizado: %s" % estado.get("sincronizado", "nunca"))
     qual = provedor()

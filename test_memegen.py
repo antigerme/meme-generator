@@ -9,6 +9,7 @@ Nao precisam de rede nem de chave da API: o catalogo vem de um fixture embutido
 e as chamadas a API sao substituidas.
 """
 
+import argparse
 import base64
 import io
 import json
@@ -95,8 +96,10 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self._orig = (M.DADOS, M.IMAGENS, M.CATALOGO, M.CONTRATOS, M.ESTADO,
-                      M.CERT, M.CHAVE)
+                      M.CERT, M.CHAVE, M.LOTE, M.TRAVA)
         M.DADOS = self.tmp
+        M.LOTE = os.path.join(self.tmp, "lote.json")
+        M.TRAVA = os.path.join(self.tmp, "enrich.lock")
         M.IMAGENS = os.path.join(self.tmp, "templates")
         M.CATALOGO = os.path.join(self.tmp, "catalogo.json")
         M.CONTRATOS = os.path.join(self.tmp, "contratos.json")
@@ -117,7 +120,7 @@ class Base(unittest.TestCase):
 
     def tearDown(self):
         (M.DADOS, M.IMAGENS, M.CATALOGO, M.CONTRATOS, M.ESTADO,
-         M.CERT, M.CHAVE) = self._orig
+         M.CERT, M.CHAVE, M.LOTE, M.TRAVA) = self._orig
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
@@ -613,6 +616,173 @@ class TestTLS(Base):
 
 
 # -------------------------------------------------------------- portabilidade
+
+class TestLoteAssincrono(Base):
+    """O timer envia o lote num dia e coleta no seguinte.
+
+    Aconteceu de verdade: apagaram dados/, o timer recriou catalogo e imagens,
+    enviou um lote de 836 e saiu. Os contratos so entram com `--collect`, e o
+    id do lote so existia no journal -- a proxima rodada, com contratos ainda
+    vazios, reenviaria os 836 e cobraria em dobro.
+    """
+
+    def setUp(self):
+        Base.setUp(self)
+        M.gravar_json(M.CONTRATOS, {})
+        self._amb = dict((k, os.environ.get(k)) for k in
+                         ("MEMEGEN_PROVIDER", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"))
+        os.environ["MEMEGEN_PROVIDER"] = "anthropic"
+        os.environ["ANTHROPIC_API_KEY"] = "sk-teste"
+        os.environ.pop("GEMINI_API_KEY", None)
+        self._chamar, self._buscar = M.chamar_api, M.buscar_texto
+        self.chamadas = []
+
+    def tearDown(self):
+        M.chamar_api, M.buscar_texto = self._chamar, self._buscar
+        for k, v in self._amb.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        Base.tearDown(self)
+
+    def _args(self, **kw):
+        base = dict(collect=None, wait=False, limit=None, only=None, model=None,
+                    pausa=1.0, dry_run=False, debug=False)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def _api(self, resposta):
+        """Falsa API: registra cada chamada; `resposta(caminho, carga)` decide."""
+        def falsa(caminho, carga=None, metodo=None, timeout=300):
+            self.chamadas.append((caminho, carga))
+            return resposta(caminho, carga)
+        M.chamar_api = falsa
+
+    def _posts(self):
+        return [c for c in self.chamadas if c[1] is not None]
+
+    def _registrar(self, lote_id="msgbatch_1", hashes=None):
+        hashes = hashes or dict((t, self.catalogo[t]["_hash"]) for t in self.catalogo)
+        M.gravar_json(M.LOTE, {"id": lote_id, "enviado": "2026-10-18T04:04:51+00:00",
+                               "hashes": hashes})
+
+    def _resultados(self, ids):
+        linhas = [json.dumps({"custom_id": tid,
+                              "result": {"type": "succeeded",
+                                         "message": _msg(self.contratos[tid])}})
+                  for tid in ids]
+        M.buscar_texto = lambda url, **kw: "\n".join(linhas)
+
+    def test_envio_grava_o_id_do_lote_com_os_hashes(self):
+        self._api(lambda c, p: {"id": "msgbatch_1"})
+        self.assertEqual(M.cmd_enrich(self._args()), 0)
+        reg = M.ler_json(M.LOTE, None)
+        self.assertEqual(reg["id"], "msgbatch_1")
+        self.assertEqual(reg["hashes"],
+                         dict((t, self.catalogo[t]["_hash"]) for t in self.catalogo))
+        self.assertEqual(M.ler_json(M.CONTRATOS, {}), {})   # contrato so na coleta
+
+    def test_lote_em_andamento_nao_reenvia(self):
+        self._registrar()
+        self._api(lambda c, p: {"processing_status": "in_progress",
+                                "request_counts": {"processing": 2, "succeeded": 0}})
+        self.assertEqual(M.cmd_enrich(self._args()), 0)
+        self.assertEqual(self._posts(), [])                 # nenhum envio
+        self.assertEqual([c[0] for c in self.chamadas],
+                         ["/v1/messages/batches/msgbatch_1"])
+        self.assertEqual(M.ler_json(M.LOTE, None)["id"], "msgbatch_1")
+
+    def test_lote_terminado_e_coletado_e_o_registro_some(self):
+        self._registrar()
+        self._api(lambda c, p: {"processing_status": "ended",
+                                "results_url": "https://exemplo/r"})
+        self._resultados(sorted(self.catalogo))
+        self.assertEqual(M.cmd_enrich(self._args()), 0)
+        self.assertEqual(sorted(M.ler_json(M.CONTRATOS, {})), sorted(self.catalogo))
+        self.assertFalse(os.path.exists(M.LOTE))
+        self.assertEqual(self._posts(), [])                 # nada sobrou, nada reenviado
+
+    def test_erro_de_rede_na_checagem_nao_reenvia_nem_apaga(self):
+        self._registrar()
+
+        def cai(caminho, carga):
+            raise M.ErroAPI("API respondeu 503: sobrecarregado", 503)
+        self._api(cai)
+        with self.assertRaises(M.ErroAPI):
+            M.cmd_enrich(self._args())
+        self.assertEqual(self._posts(), [])
+        self.assertTrue(os.path.exists(M.LOTE))             # na duvida, mantem
+
+    def test_lote_inexistente_404_descarta_o_registro_e_reenvia(self):
+        self._registrar("msgbatch_velho")
+
+        def resp(caminho, carga):
+            if carga is None:
+                raise M.ErroAPI("API respondeu 404: not found", 404)
+            return {"id": "msgbatch_2"}
+        self._api(resp)
+        self.assertEqual(M.cmd_enrich(self._args()), 0)
+        self.assertEqual(M.ler_json(M.LOTE, None)["id"], "msgbatch_2")
+        self.assertEqual(len(self._posts()), 1)
+
+    def test_coleta_usa_o_hash_do_envio_e_ignora_template_que_sumiu(self):
+        """Coletado um dia depois: o template pode ter mudado ou saido do
+        catalogo. O hash de agora marcaria como em dia um contrato escrito
+        sobre o conteudo antigo; e o que saiu nao pode derrubar a coleta."""
+        hashes = dict((t, self.catalogo[t]["_hash"]) for t in self.catalogo)
+        hashes["drake"] = "hash-de-quando-enviou"
+        hashes["fantasma"] = "x"
+        self._registrar(hashes=hashes)
+        self._api(lambda c, p: {"processing_status": "ended",
+                                "results_url": "https://exemplo/r"})
+        self.contratos["fantasma"] = self.contratos["drake"]
+        self._resultados(sorted(self.contratos))
+        M.cmd_enrich(self._args(collect="msgbatch_1"))
+        gravados = M.ler_json(M.CONTRATOS, {})
+        self.assertNotIn("fantasma", gravados)              # nao quebrou
+        self.assertEqual(gravados["drake"]["source_hash"], "hash-de-quando-enviou")
+        self.assertEqual(M.contratos_pendentes(self.catalogo, gravados), ["drake"])
+
+    def test_collect_de_outro_lote_preserva_o_registro(self):
+        self._registrar("msgbatch_1")
+        self._api(lambda c, p: {"processing_status": "ended",
+                                "results_url": "https://exemplo/r"})
+        self._resultados(sorted(self.catalogo))
+        M.cmd_enrich(self._args(collect="msgbatch_outro"))
+        self.assertEqual(M.ler_json(M.LOTE, None)["id"], "msgbatch_1")
+
+    def test_registro_existente_dentro_da_trava_impede_o_envio(self):
+        """Corrida: outra execucao grava o registro entre a checagem do topo e
+        a trava. A releitura do arquivo, sob a trava, segura o segundo envio."""
+        original = M.tratar_lote_anterior
+
+        def tarde(catalogo):
+            achado = original(catalogo)                     # ainda sem registro
+            self._registrar("msgbatch_do_outro")            # o outro gravou agora
+            return achado
+        M.tratar_lote_anterior = tarde
+        try:
+            self._api(lambda c, p: {"id": "nao-deveria-enviar"})
+            self.assertEqual(M.cmd_enrich(self._args()), 0)
+        finally:
+            M.tratar_lote_anterior = original
+        self.assertEqual(self._posts(), [])
+        self.assertEqual(M.ler_json(M.LOTE, None)["id"], "msgbatch_do_outro")
+
+    def test_aviso_da_pagina_diz_que_ha_lote_em_vez_de_mandar_rodar_enrich(self):
+        M.ESTADO_MEM = M.Estado()
+        self.assertIn("Rode `enrich`", M.Handler.rota_status(None)["aviso"])
+        self._registrar()
+        aviso = M.Handler.rota_status(None)["aviso"]
+        self.assertIn("proxima rodada", aviso)     # nao diz "quando terminar"
+        self.assertNotIn("Rode", aviso)
+
+    def test_dry_run_nao_toca_na_api(self):
+        self._registrar()
+        self._api(lambda c, p: self.fail("dry-run nao pode chamar a API"))
+        self.assertEqual(M.cmd_enrich(self._args(dry_run=True)), 0)
+
 
 class TestPortabilidade(unittest.TestCase):
 
