@@ -363,8 +363,9 @@ timer atropele uma execução manual.
 Com o provedor Anthropic o timer fecha o ciclo em duas rodadas: numa envia o
 lote, na seguinte coleta (ver `enrich`, acima). Entre as duas, os "0 contratos"
 na página são esperados. O aviso da página diz que há um lote enviado e que os
-contratos entram na próxima rodada do `enrich` depois que ele terminar. Com a VM
-desligada fora dos testes, essa rodada pode ser a do dia seguinte.
+contratos entram na próxima rodada do `enrich` depois que ele terminar. Com o
+timer diário, essa rodada pode ser a do dia seguinte (e, com a VM desligada, a do
+próximo boot).
 
 **Apagar `dados/` refaz tudo e cobra por isso.** O timer recria catálogo e
 imagens e envia os 836 num lote novo, pago. E o `rm` leva junto o

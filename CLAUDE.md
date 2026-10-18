@@ -101,8 +101,9 @@ limite apertado.
 ## Em produção desde 16/09/2026
 
 VM RHEL 8.10 na Oracle Cloud, Python 3.6.8 — a máquina que motiva a restrição
-de versão. As 118 passam lá. Ele só liga a VM para testar; o `enable` do
-systemd faz o serviço subir sozinho no boot.
+de versão. As 118 passam lá. **Desde 18/10 a VM é produção: fica ligada o tempo
+todo** (antes ele só a ligava para testar). O `enable` do systemd faz o serviço
+subir sozinho no boot.
 
     navegador --HTTPS--> Cloudflare --HTTP--> Apache :80 --> memegen 127.0.0.1:8000
 
@@ -114,8 +115,13 @@ systemd faz o serviço subir sozinho no boot.
   `claude-opus-5-5`). As linhas do Gemini ficaram comentadas. Os padrões dentro
   do código (`PADROES`) também apontam para a geração 5.5 desde 18/10; as
   variáveis da VM continuam e valem sobre eles
-- `memegen.felicio.com.br`, **sem autenticação**, por decisão dele — a VM fica
-  desligada fora dos testes, o que limita a janela
+- `memegen.felicio.com.br`, **sem autenticação**, por decisão dele. **Essa decisão
+  caiu em duas premissas**: foi tomada quando a VM só ligava para testar e a API
+  era o Gemini gratuito (pior caso: gastar cota). Hoje a VM está sempre no ar e
+  cada geração é paga na Anthropic. Pendentes de decisão dele: teto de gasto
+  mensal no Console da Anthropic, Cloudflare Access (ou outro controle de
+  acesso), e revogar a chave do Gemini, que apareceu em texto claro numa
+  conversa
 - (Até 17/10 a geração na VM usava `gemini-3.5-flash-lite`, 500/dia em vez das 20
   do `3.8-flash`.)
 - **Validado de ponta a ponta no ar:** ele abriu o domínio e gerou memes. Toda
@@ -153,8 +159,7 @@ cobraria em dobro. Corrigido: o id vai para `dados/lote.json` ao enviar, e todo
 `enrich` começa por ele (andando: não envia; terminado: coleta; 404: descarta
 dizendo que descartou; qualquer outro erro sobe, porque na dúvida não se
 reenvia). O contrato entra na próxima rodada do `enrich` **depois** de o lote
-terminar, não quando ele termina: com timer diário e VM desligada, pode ser o dia
-seguinte. A página avisa isso em vez de dizer "quando terminar". A coleta usa o hash do momento do **envio**, não o de agora: coletado
+terminar, não quando ele termina: com timer diário, pode ser o dia seguinte. A página avisa isso em vez de dizer "quando terminar". A coleta usa o hash do momento do **envio**, não o de agora: coletado
 um dia depois, o template pode ter mudado ou sumido. Limite conhecido: `rm -rf
 dados/*` leva o `lote.json` junto.
 
