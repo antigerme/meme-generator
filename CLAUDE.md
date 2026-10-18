@@ -240,9 +240,15 @@ gastar cota.
    vale depois de decidir se o custo/tempo da triagem incomoda.
 6. **Template com texto já impresso na imagem.** No "How About No Bear" a
    legenda nova cai por cima de um "HOW ABOUT NO" que vem na própria imagem do
-   9GAG. Não se sabe se o editor deles mostra o mesmo. Ideia, não bug
-   confirmado: um campo no contrato (a imagem já traz texto?) para a geração
-   não escrever por cima.
+   9GAG. **Conferido baixando o original** (640x384): o texto está impresso na
+   base da foto, perto de y 310-360. A caixa `text-1` do catálogo deles (y=320,
+   h=64, centralizada) cobre exatamente esse trecho, então a sobreposição vem
+   da geometria do próprio 9GAG, não do nosso render (o editor deles eu não vi).
+   Contorno hoje: apagar o campo de baixo no cartão, porque `desenhar` pula
+   caixa vazia. Quantos dos 836 têm texto impresso é desconhecido: só olhando as
+   imagens. Se um dia valer o custo, um campo no contrato (a imagem já traz
+   texto?) exige reenriquecer; uma lista curta à mão dos casos conhecidos é o
+   caminho barato.
 7. Fonte Impact não existe no Fedora; o canvas cai para alternativa. Não foi
    avaliado se o visual incomoda.
 
