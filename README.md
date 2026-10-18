@@ -437,7 +437,7 @@ enriquece uma vez e gera alguns memes por dia, a cota gratuita costuma bastar.
 
 | | Anthropic | Gemini |
 |---|---|---|
-| Enriquecer os 836 | Batch API, ~1h, US$ 0,84 | sequencial, mais lento, dentro da cota |
+| Enriquecer os 836 | Batch API, < 15 min (medido uma vez; até 24 h garantido), US$ 0,84 (estimativa) | sequencial, mais lento, dentro da cota |
 | Endpoint | `/v1/messages` | `/v1beta/interactions` |
 | Padrão enriquecer | `claude-sonnet-5` | `gemini-3.5-flash-lite` |
 | Padrão gerar | `claude-opus-5` | `gemini-3.8-flash` |

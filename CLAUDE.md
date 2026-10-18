@@ -157,6 +157,23 @@ seguinte. A página avisa isso em vez de dizer "quando terminar". A coleta usa o
 um dia depois, o template pode ter mudado ou sumido. Limite conhecido: `rm -rf
 dados/*` leva o `lote.json` junto.
 
+**Validado na VM real, nos dois ramos novos.** 1ª rodada: envia o lote de 836 e
+grava `lote.json` (36 KB, os 836 hashes). 2ª rodada, 2 minutos depois: `ainda em
+andamento … 0 prontos, 836 na fila. Nada novo foi enviado` — sem reenvio. 3ª
+rodada, ~14 min após o envio: `terminou; coletando`, `contratos gravados: 836
+ok, 0 com erro`, registro apagado, `contratos.json` com dono `opc`. Antes do
+conserto estar na VM, o mesmo vaivém de "apagar `dados/` e iniciar o serviço"
+enviou **quatro** lotes de 836 em 12 minutos (03:53, 04:00, 04:01, 04:04). Fica a
+lição: o registro mora dentro de `dados/` (o unit só deixa escrever ali), então
+apagar `dados/` apaga a memória do lote e cada novo início envia outro. Ele
+disse que custo não é problema (tem US$ 100/mês de crédito).
+
+Conferência dos 836 contratos escritos pelo `claude-sonnet-5-5`: todos os
+modelos iguais, nenhum template sem contrato, **0 contratos cujos slots não
+batem com as caixas**. `distracted_boyfriend`, o caso difícil, saiu certo: caixa
+1 a tentação, 2 quem se distrai, 3 o que está sendo ignorado. Um lote de 836
+terminou em menos de 15 min (medido uma vez; a API só garante até 24 h).
+
 Medido no mesmo episódio: o enriquecimento com `claude-sonnet-5-5` e
 `max_tokens` 2000 voltou **836 de 836 válidos**, 0 com erro. Isso aposenta o
 risco de truncamento só no enriquecimento. Triagem em `haiku-5-5` (1500) e
