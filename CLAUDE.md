@@ -254,13 +254,15 @@ gastar cota.
    imagens. Se um dia valer o custo, um campo no contrato (a imagem já traz
    texto?) exige reenriquecer; uma lista curta à mão dos casos conhecidos é o
    caminho barato.
-7. **Imagens que falham de forma aleatória na aba Templates (relato dele, 18/10).**
+7. **RESOLVIDO.** Imagens que falhavam de forma aleatória na aba Templates (18/10).
    Subi a fila de conexões do servidor de 5 (padrão do `socketserver`) para 128:
    **não há teto de threads para subir**, o `ThreadingMixIn` cria uma por conexão.
    Medido localmente com as 836 imagens e conexões novas de uma vez: a fila de 5 já
    dava um pedido de 1,24 s com 30 conexões e p95 de 1,23 s com 150; com 128, p95
    de 0,09 s. **Zero erros nos dois**: a fila pequena explica *lentidão* em rajada,
-   não *falha*. Não está provado que isso cura o sintoma dele. Também descartado
+   não *falha*. **Ele confirmou, depois de `pull` + restart na VM, que as imagens
+   passaram a carregar** (a causa é inferida, sem medição antes/depois no ar:
+   fila pequena em rajada é a explicação mais simples). Também descartado
    medindo: não é template específico (836 de 836 baixam, nenhum id é recusado
    pelo `NOME_SEGURO`). A evidência decisiva, se persistir, está nos logs do
    Apache (`/var/log/httpd/memegen_access.log` para ver o status dos pedidos que
